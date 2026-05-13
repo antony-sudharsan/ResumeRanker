@@ -17,6 +17,7 @@ def extract_years_of_experience(text: str) -> float | None:
         r"(?:experience|exp)[\s:]*(\d+\.?\d*)\+?\s*(?:years?|yrs?)",
         r"(?:over|more\s+than|approximately|approx|around|about)\s+(\d+\.?\d*)\s*(?:years?|yrs?)",
         r"(\d+\.?\d*)\+?\s*(?:years?|yrs?)\s+(?:in|of|working)",
+        r"(\d+\.?\d*)\s+plus\s+(?:years?|yrs?)[\s\-]*(?:of\s+)?(?:experience|exp|programming)",
     ]
 
     max_years = None
@@ -52,6 +53,7 @@ def extract_required_experience(jd_text: str) -> tuple[float | None, float | Non
     min_patterns = [
         r"(?:minimum|min|at\s+least|atleast)\s+(\d+\.?\d*)\s*(?:years?|yrs?)",
         r"(\d+\.?\d*)\+\s*(?:years?|yrs?)",
+        r"(\d+\.?\d*)\s+plus\s+(?:years?|yrs?)",
     ]
     found_min = None
     for pattern in min_patterns:
