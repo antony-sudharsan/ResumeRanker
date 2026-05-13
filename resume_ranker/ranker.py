@@ -1,5 +1,6 @@
 """Core ranking engine that scores and ranks candidates against a job description."""
 
+import re
 from dataclasses import dataclass, field
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -56,15 +57,95 @@ class CandidateResult:
     ROLES_WEIGHT: float = 0.30
 
 
+_PREFERRED_HEADERS = re.compile(
+    r"(?:preferred|nice\s+to\s+have|good\s+to\s+have|bonus|desirable|optional)\s+"
+    r"(?:skills?|qualifications?|requirements?|experience)?",
+    re.IGNORECASE,
+)
+_RESPONSIBILITIES_HEADERS = re.compile(
+    r"(?:key\s+)?(?:responsibilities|duties|role\s+description|what\s+you.?ll\s+do)",
+    re.IGNORECASE,
+)
+_REQUIRED_SKILLS_HEADERS = re.compile(
+    r"(?:required|must\s+have|essential|key|core|minimum)?\s*"
+    r"(?:skills?|qualifications?|requirements?|competencies|technical\s+skills?)",
+    re.IGNORECASE,
+)
+_SECTION_HEADER = re.compile(r"^(?:#{1,4}\s+)?[A-Z][A-Za-z &/,\-–]+$", re.MULTILINE)
+
+
+def _find_section_range(
+    lines: list[str], header_re: re.Pattern[str], start_from: int = 0
+) -> tuple[int, int] | None:
+    """Find start and end line indices for a section matching header_re."""
+    section_start = None
+    for i in range(start_from, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        # Line must look like a section header (short, title-case, no trailing period)
+        if not _SECTION_HEADER.match(stripped):
+            continue
+        if header_re.search(stripped):
+            section_start = i
+            break
+    if section_start is None:
+        return None
+    section_end = len(lines)
+    for i in range(section_start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped and _SECTION_HEADER.match(stripped):
+            section_end = i
+            break
+    return section_start, section_end
+
+
+def _split_jd_sections(jd_text: str) -> tuple[str, str, str]:
+    """Split a JD into required-skills, preferred-skills, and responsibilities.
+
+    Returns (required_skills_text, preferred_text, responsibilities_text).
+    If a required-skills section is found, only that section is used for skill
+    matching. Otherwise the full JD minus preferred/responsibilities is used.
+    """
+    lines = jd_text.split("\n")
+
+    pref_range = _find_section_range(lines, _PREFERRED_HEADERS)
+    resp_range = _find_section_range(lines, _RESPONSIBILITIES_HEADERS)
+    req_range = _find_section_range(lines, _REQUIRED_SKILLS_HEADERS)
+
+    pref_text = "\n".join(lines[pref_range[0] : pref_range[1]]) if pref_range else ""
+    resp_text = "\n".join(lines[resp_range[0] : resp_range[1]]) if resp_range else ""
+
+    # If a dedicated "Required Skills" section exists, use only that
+    if req_range:
+        req_text = "\n".join(lines[req_range[0] : req_range[1]])
+    else:
+        # Fallback: use the full JD minus preferred and responsibilities sections
+        exclude = set()
+        for r in (pref_range, resp_range):
+            if r:
+                exclude.update(range(r[0], r[1]))
+        req_text = "\n".join(line for i, line in enumerate(lines) if i not in exclude)
+
+    return req_text, pref_text, resp_text
+
+
 def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
-    """Compare skills between job description and resume."""
-    jd_skills_categorized = extract_skills(jd_text)
-    resume_skills_categorized = extract_skills(resume_text)
+    """Compare skills between job description and resume.
 
-    jd_skills = flatten_skills(jd_skills_categorized)
-    resume_skills = flatten_skills(resume_skills_categorized)
+    Only skills from the required-skills section of the JD count toward the
+    match percentage. Skills found only in preferred or responsibilities
+    sections are not penalised as missing.
+    """
+    required_jd, preferred_jd, _resp_jd = _split_jd_sections(jd_text)
 
-    if not jd_skills:
+    required_skills = flatten_skills(extract_skills(required_jd))
+    preferred_skills = flatten_skills(extract_skills(preferred_jd)) - required_skills
+    resume_skills = flatten_skills(extract_skills(resume_text))
+
+    all_jd_skills = required_skills | preferred_skills
+
+    if not all_jd_skills:
         return SkillAnalysis(
             matched_skills=sorted(resume_skills),
             missing_skills=[],
@@ -72,10 +153,14 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
             match_percentage=100.0 if resume_skills else 0.0,
         )
 
-    matched = sorted(jd_skills & resume_skills)
-    missing = sorted(jd_skills - resume_skills)
-    extra = sorted(resume_skills - jd_skills)
-    match_pct = (len(matched) / len(jd_skills)) * 100.0
+    matched = sorted(all_jd_skills & resume_skills)
+    missing = sorted(required_skills - resume_skills)
+    extra = sorted(resume_skills - all_jd_skills)
+
+    if required_skills:
+        match_pct = (len(required_skills & resume_skills) / len(required_skills)) * 100.0
+    else:
+        match_pct = 100.0
 
     return SkillAnalysis(
         matched_skills=matched,
