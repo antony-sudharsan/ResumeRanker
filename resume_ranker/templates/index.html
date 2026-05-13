@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Ranker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Resume Ranker</h1>
+            <p class="subtitle">Rank candidates based on skills, experience, and role fit</p>
+        </header>
+
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        <form action="/rank" method="post" enctype="multipart/form-data" id="rankForm">
+            <div class="form-group">
+                <label for="job_description">Job Description</label>
+                <textarea
+                    id="job_description"
+                    name="job_description"
+                    rows="12"
+                    placeholder="Paste the complete job description here including required skills, experience, roles and responsibilities..."
+                    required
+                >{{ job_description if job_description else '' }}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="resumes">Upload Resumes</label>
+                <div class="file-upload" id="dropZone">
+                    <input type="file" id="resumes" name="resumes" multiple
+                           accept=".pdf,.docx,.txt" required>
+                    <div class="upload-content">
+                        <span class="upload-icon">&#128196;</span>
+                        <p>Drag & drop resumes here or <strong>click to browse</strong></p>
+                        <p class="file-types">Supported: PDF, DOCX, TXT</p>
+                    </div>
+                    <div id="fileList" class="file-list"></div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary" id="submitBtn">
+                Rank Candidates
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('resumes');
+        const fileList = document.getElementById('fileList');
+        const dropZone = document.getElementById('dropZone');
+        const form = document.getElementById('rankForm');
+        const submitBtn = document.getElementById('submitBtn');
+
+        fileInput.addEventListener('change', updateFileList);
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            fileInput.files = e.dataTransfer.files;
+            updateFileList();
+        });
+
+        function updateFileList() {
+            fileList.innerHTML = '';
+            for (const file of fileInput.files) {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                fileList.appendChild(div);
+            }
+        }
+
+        form.addEventListener('submit', () => {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Ranking candidates...';
+        });
+    </script>
+</body>
+</html>

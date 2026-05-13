@@ -1,0 +1,350 @@
+/* Reset & Base */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 2rem;
+    color: #16213e;
+    margin-bottom: 0.25rem;
+}
+
+.subtitle {
+    color: #6b7280;
+    font-size: 1.05rem;
+}
+
+/* Alerts */
+.alert {
+    padding: 1rem 1.25rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+.alert-warning {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+}
+
+.alert ul {
+    margin-top: 0.5rem;
+    padding-left: 1.25rem;
+}
+
+/* Form */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #374151;
+}
+
+textarea {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 2px solid #d1d5db;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+    transition: border-color 0.2s;
+}
+
+textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* File Upload */
+.file-upload {
+    position: relative;
+    border: 2px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.file-upload:hover, .file-upload.dragover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+
+.file-upload input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.upload-icon {
+    font-size: 2.5rem;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.file-types {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    margin-top: 0.25rem;
+}
+
+.file-list {
+    margin-top: 1rem;
+    text-align: left;
+}
+
+.file-item {
+    padding: 0.4rem 0.75rem;
+    background: #e5e7eb;
+    border-radius: 4px;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+}
+
+/* Buttons */
+.btn-primary {
+    display: inline-block;
+    padding: 0.75rem 2rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary:hover {
+    background: #2563eb;
+}
+
+.btn-primary:disabled {
+    background: #93c5fd;
+    cursor: not-allowed;
+}
+
+/* Results */
+.results-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.candidate-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    background: linear-gradient(135deg, #1e3a5f, #16213e);
+    color: white;
+}
+
+.rank-1 .card-header {
+    background: linear-gradient(135deg, #d97706, #b45309);
+}
+
+.rank-2 .card-header {
+    background: linear-gradient(135deg, #6b7280, #4b5563);
+}
+
+.rank-3 .card-header {
+    background: linear-gradient(135deg, #92400e, #78350f);
+}
+
+.rank-badge {
+    font-size: 1.75rem;
+    font-weight: 800;
+    min-width: 3rem;
+    text-align: center;
+}
+
+.candidate-info {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.candidate-info h2 {
+    font-size: 1.2rem;
+    text-transform: capitalize;
+}
+
+.overall-score {
+    text-align: right;
+}
+
+.score-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
+.score-label {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+/* Score Bars */
+.score-bars {
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 0.25rem;
+}
+
+.bar-track {
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.6s ease;
+}
+
+.skills-bar { background: #3b82f6; }
+.exp-bar { background: #10b981; }
+.roles-bar { background: #8b5cf6; }
+
+/* Details */
+.details-section {
+    padding: 0 1.5rem 1.25rem;
+}
+
+details {
+    border-top: 1px solid #e5e7eb;
+    padding: 0.75rem 0;
+}
+
+summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #374151;
+    padding: 0.25rem 0;
+}
+
+summary:hover {
+    color: #3b82f6;
+}
+
+.skill-group {
+    margin: 0.75rem 0;
+}
+
+.skill-group h4 {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.skill-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.tag {
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.tag-matched {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.tag-missing {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.tag-extra {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.justification {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    background: #f9fafb;
+    padding: 1rem;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    color: #374151;
+}
+
+/* Actions */
+.actions {
+    text-align: center;
+    margin-top: 2rem;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .container { padding: 1rem; }
+    .candidate-info { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+    .overall-score { text-align: left; }
+}

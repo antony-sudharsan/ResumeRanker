@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ranking Results — Resume Ranker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Ranking Results</h1>
+            <p class="subtitle">{{ total_candidates }} candidate{{ 's' if total_candidates != 1 else '' }} ranked</p>
+        </header>
+
+        {% if errors %}
+        <div class="alert alert-warning">
+            <strong>Some files could not be processed:</strong>
+            <ul>
+                {% for err in errors %}
+                <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="results-grid">
+            {% for r in results %}
+            <div class="candidate-card rank-{{ r.rank }}">
+                <div class="card-header">
+                    <div class="rank-badge">#{{ r.rank }}</div>
+                    <div class="candidate-info">
+                        <h2>{{ r.candidate_name }}</h2>
+                        <div class="overall-score">
+                            <span class="score-value">{{ r.overall_score }}</span>
+                            <span class="score-label">/ 100</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="score-bars">
+                    <div class="score-bar-group">
+                        <div class="bar-label">
+                            <span>Skills Match</span>
+                            <span>{{ r.skills.match_percentage }}%</span>
+                        </div>
+                        <div class="bar-track">
+                            <div class="bar-fill skills-bar" style="width: {{ r.skills.match_percentage }}%"></div>
+                        </div>
+                    </div>
+                    <div class="score-bar-group">
+                        <div class="bar-label">
+                            <span>Experience</span>
+                            <span>{{ r.experience.score }}%</span>
+                        </div>
+                        <div class="bar-track">
+                            <div class="bar-fill exp-bar" style="width: {{ r.experience.score }}%"></div>
+                        </div>
+                    </div>
+                    <div class="score-bar-group">
+                        <div class="bar-label">
+                            <span>Roles & Responsibilities</span>
+                            <span>{{ r.roles.score }}%</span>
+                        </div>
+                        <div class="bar-track">
+                            <div class="bar-fill roles-bar" style="width: {{ r.roles.score }}%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="details-section">
+                    <details>
+                        <summary>Skills Details</summary>
+                        <div class="skills-detail">
+                            {% if r.skills.matched %}
+                            <div class="skill-group">
+                                <h4>Matched Skills</h4>
+                                <div class="skill-tags">
+                                    {% for skill in r.skills.matched %}
+                                    <span class="tag tag-matched">{{ skill }}</span>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% if r.skills.missing %}
+                            <div class="skill-group">
+                                <h4>Missing Skills</h4>
+                                <div class="skill-tags">
+                                    {% for skill in r.skills.missing %}
+                                    <span class="tag tag-missing">{{ skill }}</span>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% if r.skills.extra %}
+                            <div class="skill-group">
+                                <h4>Additional Skills</h4>
+                                <div class="skill-tags">
+                                    {% for skill in r.skills.extra %}
+                                    <span class="tag tag-extra">{{ skill }}</span>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>Experience Details</summary>
+                        <p>{{ r.experience.summary }}</p>
+                    </details>
+
+                    <details>
+                        <summary>Roles & Responsibilities</summary>
+                        <p>{{ r.roles.summary }}</p>
+                    </details>
+
+                    <details>
+                        <summary>Full Justification</summary>
+                        <pre class="justification">{{ r.justification }}</pre>
+                    </details>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="actions">
+            <a href="/" class="btn-primary">Rank More Candidates</a>
+        </div>
+    </div>
+</body>
+</html>
