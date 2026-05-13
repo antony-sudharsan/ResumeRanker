@@ -143,7 +143,7 @@ def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     else:
         if candidate_years >= req_min:
             excess = candidate_years - req_min
-            score = min(100.0, 80.0 + excess * 4)
+            score = min(100.0, 95.0 + excess * 1)
             summary = (
                 f"Candidate's {candidate_years:.0f} years meets or exceeds "
                 f"the {req_min:.0f}+ year requirement."
@@ -181,14 +181,16 @@ def _analyze_roles(jd_text: str, resume_text: str) -> RolesAnalysis:
 
     try:
         tfidf_matrix = vectorizer.fit_transform([jd_text, resume_text])
-        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        raw_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
     except ValueError:
         return RolesAnalysis(
             similarity_score=0.0,
             summary="Could not compute roles similarity due to insufficient content.",
         )
 
-    score = similarity * 100.0
+    # Raw TF-IDF cosine similarity between a JD and a resume rarely exceeds 0.5
+    # because they use different writing styles. Scale so that 0.5+ raw → 90-100.
+    score = min(100.0, raw_similarity * 200.0)
 
     if score >= 70:
         level = "Strong"
