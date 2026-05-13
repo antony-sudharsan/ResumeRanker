@@ -351,3 +351,56 @@ def flatten_skills(categorized: dict[str, list[str]]) -> set[str]:
     for skills in categorized.values():
         result.update(skills)
     return result
+
+
+# Skill inference graph: if a candidate has skill X, they likely also know Y.
+# Maps a skill to a set of inferred skills.
+SKILL_INFERENCE: dict[str, set[str]] = {
+    "spring boot": {"distributed systems", "backend engineering", "rest", "microservices"},
+    "spring cloud": {"distributed systems", "microservices", "cloud-native"},
+    "kafka": {"distributed systems", "event-driven architecture", "streaming"},
+    "rabbitmq": {"distributed systems", "event-driven architecture", "messaging"},
+    "docker": {"containerization", "devops", "cloud-native"},
+    "kubernetes": {"container orchestration", "devops", "cloud-native", "infrastructure"},
+    "microservices": {"distributed systems", "api design", "backend engineering"},
+    "aws": {"cloud computing", "infrastructure", "cloud-native"},
+    "azure": {"cloud computing", "infrastructure", "cloud-native"},
+    "gcp": {"cloud computing", "infrastructure", "cloud-native"},
+    "react": {"frontend development", "spa", "component-based architecture"},
+    "angular": {"frontend development", "spa", "component-based architecture"},
+    "vue": {"frontend development", "spa", "component-based architecture"},
+    "django": {"backend engineering", "web development", "orm"},
+    "fastapi": {"backend engineering", "api design", "async programming"},
+    "flask": {"backend engineering", "web development"},
+    "python": {"scripting", "automation"},
+    "java": {"enterprise development", "oop"},
+    "tensorflow": {"deep learning", "ai", "neural networks"},
+    "pytorch": {"deep learning", "ai", "neural networks"},
+    "postgresql": {"relational databases", "data modeling"},
+    "mongodb": {"nosql", "document databases"},
+    "redis": {"caching", "in-memory databases"},
+    "jenkins": {"ci/cd", "automation", "devops"},
+    "github actions": {"ci/cd", "automation", "devops"},
+    "terraform": {"infrastructure as code", "cloud automation", "devops"},
+    "rest": {"api design", "web services"},
+    "restful": {"api design", "web services"},
+    "graphql": {"api design", "web services"},
+    "agile": {"project management", "scrum"},
+    "scrum": {"agile", "project management"},
+    "ci/cd": {"automation", "devops", "deployment"},
+    "elasticsearch": {"search", "analytics", "distributed systems"},
+    "git": {"version control", "collaboration"},
+    "github copilot": {"ai-assisted development", "ai tools", "productivity"},
+}
+
+
+def infer_skills(explicit_skills: set[str]) -> set[str]:
+    """Infer additional skills from explicitly mentioned skills.
+
+    Returns only the inferred skills (not the explicit ones).
+    """
+    inferred: set[str] = set()
+    for skill in explicit_skills:
+        if skill in SKILL_INFERENCE:
+            inferred.update(SKILL_INFERENCE[skill])
+    return inferred - explicit_skills

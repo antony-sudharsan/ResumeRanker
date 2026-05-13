@@ -33,6 +33,17 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "matched": r.skill_analysis.matched_skills,
             "missing": r.skill_analysis.missing_skills,
             "extra": r.skill_analysis.extra_skills,
+            "inferred": r.skill_analysis.inferred_skills,
+        },
+        "semantic": {
+            "score": round(r.semantic_analysis.score, 1),
+            "summary": r.semantic_analysis.summary,
+        },
+        "title": {
+            "score": round(r.title_analysis.score, 1),
+            "jd_title": r.title_analysis.jd_title,
+            "candidate_titles": r.title_analysis.candidate_titles,
+            "summary": r.title_analysis.summary,
         },
         "experience": {
             "score": round(r.experience_analysis.score, 1),
@@ -41,9 +52,23 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "required_max": r.experience_analysis.required_max,
             "summary": r.experience_analysis.summary,
         },
+        "location": {
+            "score": round(r.location_analysis.score, 1),
+            "jd_location": r.location_analysis.jd_location,
+            "candidate_location": r.location_analysis.candidate_location,
+            "relocation_ready": r.location_analysis.relocation_ready,
+            "summary": r.location_analysis.summary,
+        },
         "roles": {
             "score": round(r.roles_analysis.similarity_score, 1),
             "summary": r.roles_analysis.summary,
+        },
+        "completeness": {
+            "score": round(r.completeness_analysis.score, 1),
+            "sections_found": r.completeness_analysis.sections_found,
+            "sections_missing": r.completeness_analysis.sections_missing,
+            "word_count": r.completeness_analysis.word_count,
+            "summary": r.completeness_analysis.summary,
         },
         "justification": r.justification,
     }

@@ -261,8 +261,12 @@ textarea:focus {
 }
 
 .skills-bar { background: #3b82f6; }
+.semantic-bar { background: #06b6d4; }
+.title-bar { background: #f59e0b; }
 .exp-bar { background: #10b981; }
+.location-bar { background: #ec4899; }
 .roles-bar { background: #8b5cf6; }
+.completeness-bar { background: #6366f1; }
 
 /* Details */
 .details-section {
@@ -323,6 +327,12 @@ summary:hover {
 .tag-extra {
     background: #dbeafe;
     color: #1e40af;
+}
+
+.tag-inferred {
+    background: #e0e7ff;
+    color: #4338ca;
+    border: 1px dashed #818cf8;
 }
 
 .justification {
