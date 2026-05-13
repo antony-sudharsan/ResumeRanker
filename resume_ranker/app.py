@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
     """Render the upload form."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 def _result_to_dict(r: CandidateResult) -> dict:
@@ -74,9 +74,9 @@ async def rank_resumes(
 
     if not candidates:
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {
-                "request": request,
+            context={
                 "error": "No valid resumes were uploaded. " + " ".join(errors),
             },
         )
@@ -85,9 +85,9 @@ async def rank_resumes(
     results_data = [_result_to_dict(r) for r in results]
 
     return templates.TemplateResponse(
+        request,
         "results.html",
-        {
-            "request": request,
+        context={
             "results": results_data,
             "job_description": job_description,
             "total_candidates": len(results),
