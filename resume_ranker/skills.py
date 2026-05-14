@@ -1,6 +1,7 @@
 """Technology skills dictionary and extraction utilities."""
 
 import re
+from dataclasses import dataclass, field
 
 # Comprehensive technology skills organized by category
 TECH_SKILLS: dict[str, list[str]] = {
@@ -323,6 +324,393 @@ TECH_SKILLS: dict[str, list[str]] = {
 ALL_SKILLS: set[str] = set()
 for category_skills in TECH_SKILLS.values():
     ALL_SKILLS.update(category_skills)
+
+
+@dataclass
+class SemanticMatchResult:
+    """Result of matching a single unknown JD skill against resume sentences.
+
+    Provides full transparency into how a skill was matched (or rejected),
+    including the sentence that triggered the match, the similarity score,
+    the match type (literal / normalized / semantic), and the confidence
+    level derived from context analysis.
+    """
+
+    skill: str
+    matched_sentence: str
+    similarity_score: float
+    match_type: str  # "literal" | "normalized_literal" | "semantic"
+    confidence: str  # "high" | "medium" | "low"
+    context: str  # "strong" | "negated" | "learning_only" | "weak_exposure" | "unknown"
+
+
+def detect_skill_context(sentence: str, skill: str) -> str:
+    """Classify how a skill is mentioned in a sentence.
+
+    Checks for three types of non-committal contexts:
+      - negated:      candidate explicitly states they lack the skill
+                      (e.g. "no experience with Docker")
+      - learning_only: candidate is still acquiring the skill
+                      (e.g. "currently learning Kubernetes")
+      - weak_exposure: candidate has only superficial familiarity
+                      (e.g. "basic exposure to AWS")
+
+    Returns one of: "negated", "learning_only", "weak_exposure", "strong", "unknown".
+    """
+    if not sentence or not skill:
+        return "unknown"
+
+    sent_lower = sentence.lower()
+    skill_lower = skill.lower()
+
+    if skill_lower not in sent_lower:
+        return "unknown"
+
+    # Pre-process to avoid false triggers from compound skill names.
+    # Replace common compound terms so their component words don't
+    # individually match learning/weak patterns (e.g. "learning" in
+    # "machine learning" should not flag as learning_only).
+    processed = sent_lower
+    processed = processed.replace("deep learning", " [[deep_learning_compound]] ")
+    processed = processed.replace("machine learning", " [[machine_learning_compound]] ")
+
+    # 1. Negation patterns — candidate explicitly says they lack this skill
+    # Use .*? to allow intervening words (e.g. "no docker experience" → matches)
+    NEGATION_PATTERNS = [
+        r"\bno\b.*?\bexperience\b",
+        r"\bnot\b.*?\bexperienced\b",
+        r"\bnever\b.*?\bworked\b",
+        r"\bnot\b.*?\bworked\b",
+        r"\bno\b.*?\bhands?-?\s*on\b",
+        r"\bwithout\b.*?\bexperience\b",
+        r"\black\s+of\b.*?\bexperience\b",
+        r"\bunfamiliar\b.*?\bwith\b",
+    ]
+
+    for pat in NEGATION_PATTERNS:
+        if re.search(pat, processed):
+            return "negated"
+
+    # 2. Learning-only patterns — candidate is still acquiring the skill
+    #    Uses \blearn\w*\b to cover "learn", "learning", "learned", "learnt", etc.
+    #    The check is skipped when the skill name itself contains "learning"
+    #    to avoid false flags for skills like "machine learning".
+    LEARNING_PATTERNS = [
+        r"currently\s+(?:learning|studying|taking)",
+        r"\blearn\w*\b",
+        r"\bbeginner\b",
+        r"basic\s+understanding",
+        r"basic\s+knowledge",
+        r"just\s+begun",
+    ]
+
+    for pat in LEARNING_PATTERNS:
+        if re.search(pat, processed):
+            if "learning" in skill_lower:
+                continue  # skill is something like "machine learning"
+            return "learning_only"
+
+    # 3. Weak exposure patterns — surface-level / beginner familiarity
+    WEAK_PATTERNS = [
+        r"familiar\s+with",
+        r"exposure\s+to",
+        r"interested\s+(?:in|to)",
+        r"\bexploring\b",
+        r"self.?learning",
+        r"some\s+knowledge",
+        r"basic\s+exposure",
+        r"basic\s+experience",
+    ]
+
+    for pat in WEAK_PATTERNS:
+        if re.search(pat, processed):
+            return "weak_exposure"
+
+    return "strong"
+
+
+def _get_overall_skill_context(resume_text: str, skill: str) -> str:
+    """Determine the overall context of a skill across ALL its mentions in the resume.
+
+    Checks every sentence that mentions the skill and returns the aggregate context:
+      - "negated"       → every mention is negated
+      - "learning_only" → mentions include learning signals (but no strong signal)
+      - "weak_exposure" → mentions include weak signals (but no strong signal)
+      - "strong"        → at least one mention is positive/strong
+      - "unknown"       → skill not found in any sentence
+    """
+    # Split on sentence punctuation AND newlines to handle bullet-pointed text
+    # (e.g. "• i have no docker experience" with no period at end)
+    raw_parts = re.split(r"(?:[.!?\n]|^\s*[•\-**])\s*", resume_text, flags=re.MULTILINE)
+    sentences = [p.strip(" \t\n\r•\-*") for p in raw_parts if len(p.strip(" \t\n\r•\-*")) > 10]
+    if not sentences:
+        sentences = [resume_text[:500]]
+
+    contexts: list[str] = []
+    for sent in sentences:
+        if skill.lower() in sent.lower():
+            ctx = detect_skill_context(sent, skill)
+            contexts.append(ctx)
+
+    if not contexts:
+        return "unknown"
+
+    # If ANY mention is strong, the overall context is strong (positive outweighs negative)
+    if any(c == "strong" for c in contexts):
+        return "strong"
+
+    # Mixed signals where at least one mention is not negated → benefit of the doubt
+    if any(c != "negated" for c in contexts) and any(c == "negated" for c in contexts):
+        return "weak_exposure"
+
+    # All mentions are the same context
+    if all(c == "negated" for c in contexts):
+        return "negated"
+    if all(c == "learning_only" for c in contexts):
+        return "learning_only"
+    if all(c == "weak_exposure" for c in contexts):
+        return "weak_exposure"
+
+    # Fallback: return the most common non-strong context
+    return max(set(contexts), key=contexts.count)
+
+
+def _find_sentence_with_skill(sentences: list[str], skill: str) -> str | None:
+    """Return the first sentence that contains the given skill (case-insensitive)."""
+    skill_lower = skill.lower()
+    for sent in sentences:
+        if skill_lower in sent.lower():
+            return sent
+    return None
+
+
+_SECTION_HEADER_LIKE = re.compile(
+    r"^(?:(?:required|preferred|core|key|technical|essential|must\s+have|nice\s+to\s+have)\s+)?"
+    r"(?:skills?|qualifications?|competencies|experience|requirements?)\s*:?\s*$",
+    re.I,
+)
+
+
+def _extract_skill_phrases(text: str) -> list[str]:
+    phrases: list[str] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        cleaned = re.sub(r"^[\s#*•\-·]+", "", line).strip()
+        if not cleaned:
+            continue
+        if _SECTION_HEADER_LIKE.match(cleaned):
+            continue
+        parts = re.split(r"\s*,\s*", cleaned)
+        for part in parts:
+            part = part.strip()
+            sub_parts = re.split(r"\s+/\s+|\s+&\s+", part)
+            for sub in sub_parts:
+                sub = sub.strip().strip("*").strip()
+                sub = re.sub(r"\s*\(.*?\)\s*", "", sub).strip()
+                if sub and len(sub) > 1 and len(sub) <= 50:
+                    phrases.append(sub)
+    return phrases
+
+
+def extract_unknown_skills_semantic(
+    required_skills_text: str,
+    resume_text: str,
+    threshold: float = 0.45,
+) -> tuple[set[str], set[str], list[SemanticMatchResult]]:
+    """Detect JD skills not covered by the dictionary using literal + semantic matching.
+
+    Applies a 4-tier matching pipeline:
+      Tier 2 — literal substring match
+      Tier 3 — normalized literal match (strip punctuation)
+      Tier 4 — sentence-level semantic match via sentence-transformers
+
+    Before accepting any match, the resume sentence is checked for negation,
+    learning-only, or weak-exposure context. Negated skills are never matched.
+    Learning-only and weak-exposure skills are excluded from the matched set
+    but are recorded in the match_details list with low confidence.
+
+    Returns (matched_skills, unknown_skills, match_details) where:
+      - matched        -> unknown skills the resume genuinely covers (high confidence)
+      - unknown        -> every unknown skill phrase found in the JD
+      - match_details  -> full SemanticMatchResult list for every attempted match
+                          (including rejected ones with context and confidence)
+    """
+    phrases = _extract_skill_phrases(required_skills_text)
+
+    unknown: set[str] = set()
+    for phrase in phrases:
+        if phrase.lower() not in ALL_SKILLS:
+            unknown.add(phrase.lower())
+
+    if not unknown:
+        return set(), set(), []
+
+    # Split resume into sentences (including on newlines for bullet-pointed text)
+    raw_parts = re.split(r"(?:[.!?\n]|^\s*[•\-**])\s*", resume_text, flags=re.MULTILINE)
+    sentences = [p.strip(" \t\n\r•\-*") for p in raw_parts if len(p.strip(" \t\n\r•\-*")) > 10]
+    if not sentences:
+        sentences = [resume_text[:500]]
+
+    resume_lower = resume_text.lower()
+    matched: set[str] = set()
+    needs_semantic: set[str] = set()
+    details: list[SemanticMatchResult] = []
+
+    # ------------------------------------------------------------------
+    # Tier 2: Literal substring match
+    # ------------------------------------------------------------------
+    for skill in unknown:
+        if skill in resume_lower:
+            match_sent = _find_sentence_with_skill(sentences, skill)
+            ctx = detect_skill_context(match_sent, skill) if match_sent else "strong"
+
+            if ctx == "negated":
+                # Negated skills are completely excluded from matched set
+                details.append(
+                    SemanticMatchResult(
+                        skill=skill,
+                        matched_sentence=match_sent or "",
+                        similarity_score=1.0,
+                        match_type="literal",
+                        confidence="low",
+                        context=ctx,
+                    )
+                )
+                continue
+
+            confidence = "high" if ctx == "strong" else "medium"
+            # Weak/learning-only literal matches still need to be counted
+            # since the skill name literally appears; context is noted.
+            matched.add(skill)
+            details.append(
+                SemanticMatchResult(
+                    skill=skill,
+                    matched_sentence=match_sent or "",
+                    similarity_score=1.0,
+                    match_type="literal",
+                    confidence=confidence,
+                    context=ctx,
+                )
+            )
+        else:
+            needs_semantic.add(skill)
+
+    # ------------------------------------------------------------------
+    # Tier 3: Normalized literal match (strip punctuation/parentheses)
+    # ------------------------------------------------------------------
+    if needs_semantic:
+        resume_normalized = re.sub(r"[()\[\]{}]", " ", resume_lower)
+        resume_normalized = re.sub(r"\s+", " ", resume_normalized)
+
+        still_needs: set[str] = set()
+        for skill in needs_semantic:
+            skill_normalized = re.sub(r"[()\[\]{}]", " ", skill)
+            skill_normalized = re.sub(r"\s+", " ", skill_normalized).strip()
+            if skill_normalized in resume_normalized:
+                # Try finding the sentence with original or normalized skill text
+                match_sent = _find_sentence_with_skill(sentences, skill)
+                if not match_sent:
+                    match_sent = _find_sentence_with_skill(sentences, skill_normalized)
+                ctx = detect_skill_context(match_sent, skill) if match_sent else "strong"
+
+                if ctx == "negated":
+                    details.append(
+                        SemanticMatchResult(
+                            skill=skill,
+                            matched_sentence=match_sent or "",
+                            similarity_score=1.0,
+                            match_type="normalized_literal",
+                            confidence="low",
+                            context=ctx,
+                        )
+                    )
+                    continue
+
+                confidence = "high" if ctx == "strong" else "medium"
+                matched.add(skill)
+                details.append(
+                    SemanticMatchResult(
+                        skill=skill,
+                        matched_sentence=match_sent or "",
+                        similarity_score=1.0,
+                        match_type="normalized_literal",
+                        confidence=confidence,
+                        context=ctx,
+                    )
+                )
+            else:
+                still_needs.add(skill)
+
+        # ------------------------------------------------------------------
+        # Tier 4: Sentence-level semantic match (all-MiniLM-L6-v2)
+        # ------------------------------------------------------------------
+        if still_needs:
+            from sklearn.metrics.pairwise import cosine_similarity
+            from resume_ranker.semantic import _get_model
+
+            model = _get_model()
+            sent_embs = model.encode(sentences, convert_to_numpy=True)
+
+            for skill in still_needs:
+                skill_emb = model.encode([skill], convert_to_numpy=True)
+                sims = cosine_similarity(skill_emb, sent_embs)[0]
+                best_idx = int(sims.argmax())
+                sim = float(sims[best_idx])
+
+                if sim < threshold:
+                    continue  # Below similarity threshold, no match
+
+                best_sentence = sentences[best_idx] if sentences else ""
+                ctx = detect_skill_context(best_sentence, skill) if best_sentence else "unknown"
+
+                if ctx == "negated":
+                    # Negated semantic matches are discarded entirely
+                    details.append(
+                        SemanticMatchResult(
+                            skill=skill,
+                            matched_sentence=best_sentence,
+                            similarity_score=sim,
+                            match_type="semantic",
+                            confidence="low",
+                            context=ctx,
+                        )
+                    )
+                    continue
+
+                if ctx in ("learning_only", "weak_exposure"):
+                    # Learning-only and weak semantic matches are excluded from the
+                    # matched set because the sentence does not demonstrate genuine
+                    # proficiency — it indicates the candidate is still learning or
+                    # has only superficial familiarity. The match is still recorded
+                    # with low confidence for debugging/transparency.
+                    details.append(
+                        SemanticMatchResult(
+                            skill=skill,
+                            matched_sentence=best_sentence,
+                            similarity_score=sim,
+                            match_type="semantic",
+                            confidence="low",
+                            context=ctx,
+                        )
+                    )
+                    continue
+
+                # Strong semantic match — candidate demonstrates genuine proficiency
+                matched.add(skill)
+                details.append(
+                    SemanticMatchResult(
+                        skill=skill,
+                        matched_sentence=best_sentence,
+                        similarity_score=sim,
+                        match_type="semantic",
+                        confidence="high",
+                        context=ctx,
+                    )
+                )
+
+    return matched, unknown, details
 
 
 def extract_skills(text: str) -> dict[str, list[str]]:

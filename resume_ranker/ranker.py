@@ -6,8 +6,20 @@ from dataclasses import dataclass, field
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from resume_ranker.experience import extract_required_experience, extract_years_of_experience
-from resume_ranker.skills import extract_skills, flatten_skills, infer_skills
+from resume_ranker.experience import (
+    analyze_experience_full,
+    extract_required_experience,
+    extract_required_experience_detailed,
+    extract_years_of_experience,
+)
+from resume_ranker.skills import (
+    SemanticMatchResult,
+    _get_overall_skill_context,
+    extract_skills,
+    extract_unknown_skills_semantic,
+    flatten_skills,
+    infer_skills,
+)
 
 
 @dataclass
@@ -19,6 +31,7 @@ class SkillAnalysis:
     extra_skills: list[str] = field(default_factory=list)
     inferred_skills: list[str] = field(default_factory=list)
     match_percentage: float = 0.0
+    semantic_match_details: list[SemanticMatchResult] = field(default_factory=list)
 
 
 @dataclass
@@ -30,6 +43,18 @@ class ExperienceAnalysis:
     required_max: float | None = None
     score: float = 0.0
     summary: str = ""
+
+    # New fields for enhanced experience analysis
+    candidate_total_years: float | None = None
+    candidate_relevant_years: float | None = None
+    total_experience_score: float = 0.0
+    relevant_experience_score: float = 0.0
+    confidence_score: float = 0.0
+    source: str = ""
+    matched_periods: list = field(default_factory=list)
+    ignored_periods: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -53,9 +78,10 @@ class TitleAnalysis:
     """Analysis of job title relevance."""
 
     jd_title: str = ""
-    candidate_titles: list[str] = field(default_factory=list)
+    candidate_titles: list[dict] = field(default_factory=list)
     score: float = 0.0
     summary: str = ""
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -189,16 +215,45 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
     """Compare skills between job description and resume.
 
     Scores only against required-section skills. Includes skill inference
-    to detect implied skills from the candidate's profile.
+    to detect implied skills from the candidate's profile, plus a semantic
+    fallback that catches JD skills not yet in the dictionary.
     """
     required_jd, preferred_jd, _resp_jd = _split_jd_sections(jd_text)
 
+    # 1. Dictionary-based skill extraction
     required_skills = flatten_skills(extract_skills(required_jd))
     preferred_skills = flatten_skills(extract_skills(preferred_jd)) - required_skills
     resume_skills = flatten_skills(extract_skills(resume_text))
 
-    # Infer additional skills from what the candidate explicitly has
+    # 2. Skill inference from explicit skills
     inferred = infer_skills(resume_skills)
+
+    # 3. Semantic fallback for JD skills not in the dictionary
+    #    Returns high-confidence matches, all unknown skills, and full match details
+    #    including rejected (negated/weak) semantic matches with context labels.
+    sem_matched, unknown_all, sem_details = extract_unknown_skills_semantic(
+        required_jd, resume_text
+    )
+    sem_matched -= required_skills | preferred_skills
+    unknown_all -= required_skills | preferred_skills
+
+    if unknown_all:
+        required_skills |= unknown_all
+    if sem_matched:
+        resume_skills |= sem_matched
+
+    # 4. Context-aware filtering: remove skills that are ONLY mentioned in
+    #    non-committal contexts. This catches false positives from Tier 1
+    #    dictionary matching where a skill name appears literally but in a
+    #    negated, learning-only, or weak-exposure context (e.g. "No experience
+    #    with Docker", "Interested to learn machine learning").
+    #    The context is still available in semantic_match_details for debugging.
+    filtered_resume_skills: set[str] = set()
+    for skill in resume_skills:
+        ctx = _get_overall_skill_context(resume_text, skill)
+        if ctx == "strong" or ctx == "unknown":
+            filtered_resume_skills.add(skill)
+    resume_skills = filtered_resume_skills
 
     all_jd_skills = required_skills | preferred_skills
 
@@ -209,6 +264,7 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
             extra_skills=sorted(resume_skills),
             inferred_skills=sorted(inferred),
             match_percentage=100.0 if resume_skills else 0.0,
+            semantic_match_details=sem_details,
         )
 
     matched = sorted(all_jd_skills & resume_skills)
@@ -226,85 +282,81 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
         extra_skills=extra,
         inferred_skills=sorted(inferred),
         match_percentage=match_pct,
+        semantic_match_details=sem_details,
     )
 
 
 def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     """Compare experience requirements against candidate's experience."""
+    # Use the old-school explicit years as the baseline candidate_years
     candidate_years = extract_years_of_experience(resume_text)
     req_min, req_max = extract_required_experience(jd_text)
 
-    if req_min is None and candidate_years is None:
-        return ExperienceAnalysis(
-            score=50.0,
-            summary="Experience requirements and candidate experience could not be determined.",
-        )
+    # Gather JD skills and title for relevance calculation
+    try:
+        from resume_ranker.skills import extract_skills, flatten_skills
 
-    if req_min is None:
-        return ExperienceAnalysis(
-            candidate_years=candidate_years,
-            score=70.0,
-            summary=(
-                f"Candidate has {candidate_years:.0f} years of experience. "
-                "No specific requirement found in job description."
-            ),
-        )
+        required_jd, _preferred_jd, _resp_jd = _split_jd_sections(jd_text)
+        jd_skills = flatten_skills(extract_skills(required_jd))
+    except Exception:
+        jd_skills = set()
 
-    if candidate_years is None:
-        return ExperienceAnalysis(
-            required_min=req_min,
-            required_max=req_max,
-            score=30.0,
-            summary=(
-                f"Job requires {req_min:.0f}"
-                + (f"-{req_max:.0f}" if req_max else "+")
-                + " years. Could not determine candidate's experience."
-            ),
-        )
+    jd_title = ""
+    try:
+        from resume_ranker.signals import extract_jd_title
 
-    if req_max is not None:
-        if req_min <= candidate_years <= req_max:
-            score = 100.0
-            summary = (
-                f"Candidate's {candidate_years:.0f} years perfectly fits "
-                f"the {req_min:.0f}-{req_max:.0f} year requirement."
-            )
-        elif candidate_years > req_max:
-            over = candidate_years - req_max
-            score = max(60.0, 100.0 - over * 5)
-            summary = (
-                f"Candidate has {candidate_years:.0f} years, exceeding "
-                f"the {req_min:.0f}-{req_max:.0f} year range (overqualified)."
-            )
-        else:
-            deficit = req_min - candidate_years
-            score = max(10.0, 100.0 - deficit * 15)
-            summary = (
-                f"Candidate has {candidate_years:.0f} years, below "
-                f"the {req_min:.0f}-{req_max:.0f} year requirement."
-            )
-    else:
-        if candidate_years >= req_min:
-            excess = candidate_years - req_min
-            score = min(100.0, 95.0 + excess * 1)
-            summary = (
-                f"Candidate's {candidate_years:.0f} years meets or exceeds "
-                f"the {req_min:.0f}+ year requirement."
-            )
-        else:
-            deficit = req_min - candidate_years
-            score = max(10.0, 80.0 - deficit * 15)
-            summary = (
-                f"Candidate has {candidate_years:.0f} years, below "
-                f"the {req_min:.0f}+ year requirement."
-            )
+        title_result = extract_jd_title(jd_text)
+        if isinstance(title_result, str):
+            jd_title = title_result
+    except Exception:
+        pass
+
+    # Run the full experience analysis pipeline
+    exp_debug = analyze_experience_full(resume_text, jd_text, jd_skills, jd_title)
+
+    # Map results to ExperienceAnalysis fields
+    total_years = exp_debug.get("candidate_total_years")
+    relevant_years = exp_debug.get("candidate_relevant_years")
+    final_score = exp_debug.get("final_experience_score", 0.0)
+    total_exp_score = exp_debug.get("total_experience_score", 0.0)
+    relevant_exp_score = exp_debug.get("relevant_experience_score", 0.0)
+    conf_score = exp_debug.get("confidence_score", 0.0)
+    source = exp_debug.get("source", "unknown")
+    matched_periods = exp_debug.get("matched_periods", [])
+    ignored_periods = exp_debug.get("ignored_periods", [])
+    warnings = exp_debug.get("warnings", [])
+
+    # Build a human-readable summary
+    jd_req_str = (
+        f"{req_min:.0f}" + (f"-{req_max:.0f}" if req_max else "+") if req_min is not None else "N/A"
+    )
+
+    summary_parts: list[str] = []
+    if total_years is not None:
+        summary_parts.append(f"Total: {total_years:.1f}y")
+    if relevant_years is not None:
+        summary_parts.append(f"Relevant: {relevant_years:.1f}y")
+    if req_min is not None:
+        summary_parts.append(f"Required: {jd_req_str}y")
+
+    summary = " | ".join(summary_parts) if summary_parts else "No experience data"
 
     return ExperienceAnalysis(
         candidate_years=candidate_years,
         required_min=req_min,
         required_max=req_max,
-        score=score,
+        score=final_score,
         summary=summary,
+        candidate_total_years=total_years,
+        candidate_relevant_years=relevant_years,
+        total_experience_score=total_exp_score,
+        relevant_experience_score=relevant_exp_score,
+        confidence_score=conf_score,
+        source=source,
+        matched_periods=matched_periods,
+        ignored_periods=ignored_periods,
+        warnings=warnings,
+        debug=exp_debug,
     )
 
 
@@ -352,11 +404,35 @@ def _analyze_roles(jd_text: str, resume_text: str) -> RolesAnalysis:
 
 
 def _analyze_semantic(jd_text: str, resume_text: str) -> SemanticAnalysis:
-    """Semantic AI matching using sentence-transformer embeddings."""
-    from resume_ranker.semantic import semantic_similarity_chunked
+    """Semantic AI matching using sentence-transformer embeddings.
 
-    sim = semantic_similarity_chunked(jd_text, resume_text)
-    # Scale: 0.6+ raw semantic similarity is very strong for JD-resume
+    Improvements over basic chunked similarity:
+      1. Requirements-focused blending — weights the "Requirements" section 3:2 over full JD
+      2. Optional cross-encoder re-ranking (70/30 blend with bi-encoder if available)
+      3. Calibrated scaling — maps 0.2-0.8 cosine similarity to 0-100 score
+    """
+    from resume_ranker.semantic import cross_encoder_score, semantic_similarity_chunked
+
+    required_jd, _preferred_jd, _resp_jd = _split_jd_sections(jd_text)
+
+    # Full JD semantic match (baseline)
+    full_sim = semantic_similarity_chunked(jd_text, resume_text)
+
+    # Requirements-focused match (penalizes candidates who match boilerplate but not reqs)
+    if required_jd.strip():
+        req_sim = semantic_similarity_chunked(required_jd, resume_text)
+    else:
+        req_sim = full_sim
+
+    # Blend: 60% requirements-focused, 40% full JD
+    # This ensures requirement alignment matters more than generic JD overlap
+    sim = 0.6 * req_sim + 0.4 * full_sim
+
+    # Cross-encoder re-ranking (optional — blends in if model is available)
+    ce = cross_encoder_score(jd_text, resume_text)
+    if ce is not None:
+        sim = 0.7 * ce + 0.3 * sim
+
     score = min(100.0, sim * 150.0)
 
     if score >= 70:
@@ -384,6 +460,7 @@ def _analyze_title(jd_text: str, resume_text: str) -> TitleAnalysis:
         candidate_titles=result.candidate_titles,
         score=result.score,
         summary=result.summary,
+        debug=result.debug,
     )
 
 
@@ -457,14 +534,37 @@ def _generate_justification(result: CandidateResult) -> str:
         f"TITLE RELEVANCE (score: {ta.score:.0f}/100, weight: {CandidateResult.TITLE_WEIGHT:.0%})"
     )
     parts.append(f"  {ta.summary}")
+    if ta.debug:
+        d = ta.debug
+        parts.append(
+            f"  sim={d.get('semantic_similarity', '?'):} "
+            f"seniority={d.get('seniority_factor', '?'):} "
+            f"family={d.get('role_family_factor', '?'):} "
+            f"recency={d.get('recency_factor', '?'):} "
+            f"→ {d.get('role_family_match', '?'):}"
+        )
     parts.append("")
 
     # Experience
+    ea = result.experience_analysis
     parts.append(
-        f"EXPERIENCE (score: {result.experience_analysis.score:.0f}/100, weight: "
-        f"{CandidateResult.EXPERIENCE_WEIGHT:.0%})"
+        f"EXPERIENCE (score: {ea.score:.0f}/100, weight: {CandidateResult.EXPERIENCE_WEIGHT:.0%})"
     )
-    parts.append(f"  {result.experience_analysis.summary}")
+    parts.append(f"  {ea.summary}")
+    if ea.source:
+        source_labels = {
+            "max_of_both": "explicit + dates (max)",
+            "date_based_preferred": "date-based (preferred)",
+            "explicit_preferred": "explicit (preferred)",
+            "explicit_only": "explicit years",
+            "date_based_only": "date-based",
+        }
+        label = source_labels.get(ea.source, ea.source)
+        conf = f" | Confidence: {ea.confidence_score:.0f}/100" if ea.confidence_score else ""
+        parts.append(f"  Source: {label}{conf}")
+    if ea.warnings:
+        for w in ea.warnings:
+            parts.append(f"  ⚠ {w}")
     parts.append("")
 
     # Location

@@ -159,8 +159,30 @@
                     <details>
                         <summary>Title Relevance</summary>
                         <p>{{ r.title.summary }}</p>
-                        {% if r.title.candidate_titles %}
-                        <p><strong>Candidate titles:</strong> {{ r.title.candidate_titles | join(', ') }}</p>
+                        {% if r.title.candidate_titles_detail %}
+                        <p><strong>Candidate titles:</strong></p>
+                        <ul class="title-list">
+                            {% for t in r.title.candidate_titles_detail %}
+                            <li>
+                                {{ t.title }}
+                                {% if t.is_current %}<span class="tag tag-matched" style="font-size: 0.75em;">Current</span>{% endif %}
+                                {% if t.start_year %}({{ t.start_year }}{% if t.end_year %}–{{ t.end_year }}{% elif t.is_current %}–Present{% endif %}){% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if r.title.debug %}
+                        <div class="title-debug" style="margin-top: 8px; font-size: 0.85em; color: #666;">
+                            <strong>Best match breakdown:</strong>
+                            <table style="border-collapse: collapse; margin-top: 4px;">
+                                <tr><td style="padding-right: 12px;">Semantic similarity:</td><td>{{ r.title.debug.semantic_similarity }}</td></tr>
+                                <tr><td style="padding-right: 12px;">Seniority factor:</td><td>{{ r.title.debug.seniority_factor }}</td></tr>
+                                <tr><td style="padding-right: 12px;">Role family factor:</td><td>{{ r.title.debug.role_family_factor }}</td></tr>
+                                <tr><td style="padding-right: 12px;">Recency factor:</td><td>{{ r.title.debug.recency_factor }}</td></tr>
+                                <tr><td style="padding-right: 12px;">Role family:</td><td>{{ r.title.debug.role_family_match }}</td></tr>
+                                <tr><td style="padding-right: 12px;">JD role family:</td><td>{{ r.title.debug.jd_role_family }}</td></tr>
+                            </table>
+                        </div>
                         {% endif %}
                     </details>
 

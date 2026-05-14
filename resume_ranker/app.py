@@ -42,8 +42,10 @@ def _result_to_dict(r: CandidateResult) -> dict:
         "title": {
             "score": round(r.title_analysis.score, 1),
             "jd_title": r.title_analysis.jd_title,
-            "candidate_titles": r.title_analysis.candidate_titles,
+            "candidate_titles": [t["title"] for t in r.title_analysis.candidate_titles],
+            "candidate_titles_detail": r.title_analysis.candidate_titles,
             "summary": r.title_analysis.summary,
+            "debug": r.title_analysis.debug,
         },
         "experience": {
             "score": round(r.experience_analysis.score, 1),
@@ -51,6 +53,13 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "required_min": r.experience_analysis.required_min,
             "required_max": r.experience_analysis.required_max,
             "summary": r.experience_analysis.summary,
+            "candidate_total_years": r.experience_analysis.candidate_total_years,
+            "candidate_relevant_years": r.experience_analysis.candidate_relevant_years,
+            "total_experience_score": round(r.experience_analysis.total_experience_score, 1),
+            "relevant_experience_score": round(r.experience_analysis.relevant_experience_score, 1),
+            "confidence_score": round(r.experience_analysis.confidence_score, 1),
+            "source": r.experience_analysis.source,
+            "warnings": r.experience_analysis.warnings,
         },
         "location": {
             "score": round(r.location_analysis.score, 1),
