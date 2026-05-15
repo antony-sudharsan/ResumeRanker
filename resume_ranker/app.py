@@ -82,10 +82,6 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "source": r.experience_analysis.source,
             "warnings": r.experience_analysis.warnings,
         },
-        "roles": {
-            "score": round(r.roles_analysis.similarity_score, 1),
-            "summary": r.roles_analysis.summary,
-        },
         "justification": r.justification,
     }
 
@@ -141,7 +137,6 @@ async def rank_resumes(
             "jd_skills": skills,
             "jd_min_exp": min_experience,
             "jd_max_exp": max_experience,
-            "jd_roles": roles_responsibilities,
             "total_candidates": len(results),
             "errors": errors,
         },

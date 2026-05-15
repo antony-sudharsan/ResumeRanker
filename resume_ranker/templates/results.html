@@ -26,10 +26,6 @@
                 <dt>Experience:</dt>
                 <dd>{{ jd_min_exp if jd_min_exp else '0' }}{% if jd_max_exp %} – {{ jd_max_exp }}{% endif %} year(s)</dd>
                 {% endif %}
-                {% if jd_roles %}
-                <dt>Roles:</dt>
-                <dd>{{ jd_roles[:200] }}{% if jd_roles|length > 200 %}…{% endif %}</dd>
-                {% endif %}
             </dl>
         </div>
 
@@ -79,7 +75,7 @@
                     </div>
                     <div class="score-bar-group">
                         <div class="bar-label">
-                            <span>Title Relevance (10%)</span>
+                            <span>Title Relevance (15%)</span>
                             <span>{{ r.title.score }}%</span>
                         </div>
                         <div class="bar-track">
@@ -88,20 +84,11 @@
                     </div>
                     <div class="score-bar-group">
                         <div class="bar-label">
-                            <span>Experience (20%)</span>
+                            <span>Experience (25%)</span>
                             <span>{{ r.experience.score }}%</span>
                         </div>
                         <div class="bar-track">
                             <div class="bar-fill exp-bar" style="width: {{ r.experience.score }}%"></div>
-                        </div>
-                    </div>
-                    <div class="score-bar-group">
-                        <div class="bar-label">
-                            <span>Roles & Responsibilities (10%)</span>
-                            <span>{{ r.roles.score }}%</span>
-                        </div>
-                        <div class="bar-track">
-                            <div class="bar-fill roles-bar" style="width: {{ r.roles.score }}%"></div>
                         </div>
                     </div>
                 </div>
@@ -191,11 +178,6 @@
                     <details>
                         <summary>Experience Details</summary>
                         <p>{{ r.experience.summary }}</p>
-                    </details>
-
-                    <details>
-                        <summary>Roles & Responsibilities</summary>
-                        <p>{{ r.roles.summary }}</p>
                     </details>
 
                     <details>

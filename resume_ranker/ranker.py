@@ -3,9 +3,6 @@
 import re
 from dataclasses import dataclass, field
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
 from resume_ranker.experience import (
     analyze_experience_full,
     extract_required_experience,
@@ -58,14 +55,6 @@ class ExperienceAnalysis:
 
 
 @dataclass
-class RolesAnalysis:
-    """Analysis of roles and responsibilities matching."""
-
-    similarity_score: float = 0.0
-    summary: str = ""
-
-
-@dataclass
 class SemanticAnalysis:
     """Analysis of semantic/meaning-based matching."""
 
@@ -93,7 +82,6 @@ class CandidateResult:
     rank: int = 0
     skill_analysis: SkillAnalysis = field(default_factory=SkillAnalysis)
     experience_analysis: ExperienceAnalysis = field(default_factory=ExperienceAnalysis)
-    roles_analysis: RolesAnalysis = field(default_factory=RolesAnalysis)
     semantic_analysis: SemanticAnalysis = field(default_factory=SemanticAnalysis)
     title_analysis: TitleAnalysis = field(default_factory=TitleAnalysis)
     justification: str = ""
@@ -101,9 +89,8 @@ class CandidateResult:
     # LinkedIn-style weight configuration
     SKILL_WEIGHT: float = 0.40
     SEMANTIC_WEIGHT: float = 0.20
-    TITLE_WEIGHT: float = 0.10
-    EXPERIENCE_WEIGHT: float = 0.20
-    ROLES_WEIGHT: float = 0.10
+    TITLE_WEIGHT: float = 0.15
+    EXPERIENCE_WEIGHT: float = 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -332,49 +319,6 @@ def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     )
 
 
-def _analyze_roles(jd_text: str, resume_text: str) -> RolesAnalysis:
-    """Analyze similarity of roles and responsibilities using TF-IDF cosine similarity."""
-    if not jd_text.strip() or not resume_text.strip():
-        return RolesAnalysis(
-            similarity_score=0.0,
-            summary="Insufficient text for roles comparison.",
-        )
-
-    vectorizer = TfidfVectorizer(
-        stop_words="english",
-        max_features=5000,
-        ngram_range=(1, 2),
-    )
-
-    try:
-        tfidf_matrix = vectorizer.fit_transform([jd_text, resume_text])
-        raw_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-    except ValueError:
-        return RolesAnalysis(
-            similarity_score=0.0,
-            summary="Could not compute roles similarity due to insufficient content.",
-        )
-
-    score = min(100.0, raw_similarity * 200.0)
-
-    if score >= 70:
-        level = "Strong"
-    elif score >= 40:
-        level = "Moderate"
-    elif score >= 20:
-        level = "Partial"
-    else:
-        level = "Low"
-
-    return RolesAnalysis(
-        similarity_score=score,
-        summary=(
-            f"{level} alignment ({score:.1f}%) between candidate's experience "
-            "and job responsibilities."
-        ),
-    )
-
-
 def _analyze_semantic(jd_text: str, resume_text: str) -> SemanticAnalysis:
     """Semantic AI matching using sentence-transformer embeddings.
 
@@ -511,15 +455,6 @@ def _generate_justification(result: CandidateResult) -> str:
             parts.append(f"  ⚠ {w}")
     parts.append("")
 
-    # Roles
-    parts.append(
-        f"ROLES & RESPONSIBILITIES "
-        f"(score: {result.roles_analysis.similarity_score:.0f}/100, weight: "
-        f"{CandidateResult.ROLES_WEIGHT:.0%})"
-    )
-    parts.append(f"  {result.roles_analysis.summary}")
-    parts.append("")
-
     return "\n".join(parts)
 
 
@@ -537,16 +472,14 @@ def rank_candidates(
     Scoring weights:
         Skills Match:         40%  (keyword matching with skill inference)
         Semantic AI Match:    20%  (meaning-based NLP matching)
-        Title Relevance:      10%  (job title alignment)
-        Experience:           20%  (years of experience)
-        Roles Alignment:      10%  (TF-IDF responsibilities matching)
+        Title Relevance:      15%  (job title alignment)
+        Experience:           25%  (years of experience)
     """
     results: list[CandidateResult] = []
 
     for name, resume_text in candidates:
         skill_analysis = _analyze_skills(jd_text, resume_text)
         exp_analysis = _analyze_experience(jd_text, resume_text)
-        roles_analysis = _analyze_roles(jd_text, resume_text)
         semantic_analysis = _analyze_semantic(jd_text, resume_text)
         title_analysis = _analyze_title(jd_text, resume_text)
         overall = (
@@ -554,7 +487,6 @@ def rank_candidates(
             + semantic_analysis.score * CandidateResult.SEMANTIC_WEIGHT
             + title_analysis.score * CandidateResult.TITLE_WEIGHT
             + exp_analysis.score * CandidateResult.EXPERIENCE_WEIGHT
-            + roles_analysis.similarity_score * CandidateResult.ROLES_WEIGHT
         )
 
         result = CandidateResult(
@@ -562,7 +494,6 @@ def rank_candidates(
             overall_score=overall,
             skill_analysis=skill_analysis,
             experience_analysis=exp_analysis,
-            roles_analysis=roles_analysis,
             semantic_analysis=semantic_analysis,
             title_analysis=title_analysis,
         )

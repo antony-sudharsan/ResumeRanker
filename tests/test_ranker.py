@@ -101,7 +101,7 @@ def test_ranking_has_justification():
     assert results[0].justification
     assert "SKILLS" in results[0].justification
     assert "EXPERIENCE" in results[0].justification
-    assert "ROLES" in results[0].justification
+    assert "TITLE" in results[0].justification
 
 
 def test_single_candidate():
