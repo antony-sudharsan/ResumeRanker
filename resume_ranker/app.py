@@ -17,6 +17,27 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+def _build_jd_text(
+    designation: str,
+    skills: str,
+    min_experience: str,
+    max_experience: str,
+    roles_responsibilities: str,
+) -> str:
+    """Build a structured JD string from form fields that existing parsers understand."""
+    parts = [f"Job Title: {designation}"]
+    if min_experience or max_experience:
+        min_val = min_experience if min_experience else "0"
+        max_val = max_experience if max_experience else ""
+        exp_str = f"{min_val}-{max_val} years" if max_val else f"{min_val}+ years"
+        parts.append(f"\nExperience: {exp_str}")
+    if skills.strip():
+        parts.append(f"\nRequired Skills\n{skills}")
+    if roles_responsibilities.strip():
+        parts.append(f"\nRoles and Responsibilities\n{roles_responsibilities}")
+    return "\n".join(parts)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
     """Render the upload form."""
@@ -61,23 +82,9 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "source": r.experience_analysis.source,
             "warnings": r.experience_analysis.warnings,
         },
-        "location": {
-            "score": round(r.location_analysis.score, 1),
-            "jd_location": r.location_analysis.jd_location,
-            "candidate_location": r.location_analysis.candidate_location,
-            "relocation_ready": r.location_analysis.relocation_ready,
-            "summary": r.location_analysis.summary,
-        },
         "roles": {
             "score": round(r.roles_analysis.similarity_score, 1),
             "summary": r.roles_analysis.summary,
-        },
-        "completeness": {
-            "score": round(r.completeness_analysis.score, 1),
-            "sections_found": r.completeness_analysis.sections_found,
-            "sections_missing": r.completeness_analysis.sections_missing,
-            "word_count": r.completeness_analysis.word_count,
-            "summary": r.completeness_analysis.summary,
         },
         "justification": r.justification,
     }
@@ -86,10 +93,14 @@ def _result_to_dict(r: CandidateResult) -> dict:
 @app.post("/rank", response_class=HTMLResponse)
 async def rank_resumes(
     request: Request,
-    job_description: str = Form(...),
+    designation: str = Form(...),
+    skills: str = Form(""),
+    min_experience: str = Form(""),
+    max_experience: str = Form(""),
+    roles_responsibilities: str = Form(""),
     resumes: list[UploadFile] = File(...),
 ) -> HTMLResponse:
-    """Process uploaded resumes and rank them against the job description."""
+    """Process uploaded resumes and rank them against the structured job description."""
     candidates: list[tuple[str, str]] = []
     errors: list[str] = []
 
@@ -115,7 +126,10 @@ async def rank_resumes(
             },
         )
 
-    results = rank_candidates(job_description, candidates)
+    jd_text = _build_jd_text(
+        designation, skills, min_experience, max_experience, roles_responsibilities
+    )
+    results = rank_candidates(jd_text, candidates)
     results_data = [_result_to_dict(r) for r in results]
 
     return templates.TemplateResponse(
@@ -123,7 +137,11 @@ async def rank_resumes(
         "results.html",
         context={
             "results": results_data,
-            "job_description": job_description,
+            "jd_designation": designation,
+            "jd_skills": skills,
+            "jd_min_exp": min_experience,
+            "jd_max_exp": max_experience,
+            "jd_roles": roles_responsibilities,
             "total_candidates": len(results),
             "errors": errors,
         },
@@ -132,7 +150,11 @@ async def rank_resumes(
 
 @app.post("/api/rank")
 async def api_rank_resumes(
-    job_description: str = Form(...),
+    designation: str = Form(...),
+    skills: str = Form(""),
+    min_experience: str = Form(""),
+    max_experience: str = Form(""),
+    roles_responsibilities: str = Form(""),
     resumes: list[UploadFile] = File(...),
 ) -> dict:
     """API endpoint returning JSON ranking results."""
@@ -155,10 +177,20 @@ async def api_rank_resumes(
     if not candidates:
         return {"error": "No valid resumes provided", "details": errors}
 
-    results = rank_candidates(job_description, candidates)
+    jd_text = _build_jd_text(
+        designation, skills, min_experience, max_experience, roles_responsibilities
+    )
+    results = rank_candidates(jd_text, candidates)
 
     return {
         "total_candidates": len(results),
         "rankings": [_result_to_dict(r) for r in results],
+        "jd": {
+            "designation": designation,
+            "skills": skills,
+            "min_experience": min_experience,
+            "max_experience": max_experience,
+            "roles_responsibilities": roles_responsibilities,
+        },
         "errors": errors if errors else None,
     }

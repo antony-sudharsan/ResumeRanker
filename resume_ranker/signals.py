@@ -253,6 +253,7 @@ _JD_TITLE_LABELS = [
     re.compile(r"role\s*:", re.IGNORECASE),
     re.compile(r"position\s*:", re.IGNORECASE),
     re.compile(r"opening\s*:", re.IGNORECASE),
+    re.compile(r"designation\s*:", re.IGNORECASE),
 ]
 
 # Role keywords for JD/extraction phrase detection

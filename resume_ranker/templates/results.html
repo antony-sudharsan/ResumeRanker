@@ -13,6 +13,26 @@
             <p class="subtitle">{{ total_candidates }} candidate{{ 's' if total_candidates != 1 else '' }} ranked</p>
         </header>
 
+        <div class="jd-summary">
+            <h3>Job Description</h3>
+            <dl class="jd-summary-grid">
+                <dt>Designation:</dt>
+                <dd>{{ jd_designation }}</dd>
+                {% if jd_skills %}
+                <dt>Skills:</dt>
+                <dd>{{ jd_skills }}</dd>
+                {% endif %}
+                {% if jd_min_exp or jd_max_exp %}
+                <dt>Experience:</dt>
+                <dd>{{ jd_min_exp if jd_min_exp else '0' }}{% if jd_max_exp %} – {{ jd_max_exp }}{% endif %} year(s)</dd>
+                {% endif %}
+                {% if jd_roles %}
+                <dt>Roles:</dt>
+                <dd>{{ jd_roles[:200] }}{% if jd_roles|length > 200 %}…{% endif %}</dd>
+                {% endif %}
+            </dl>
+        </div>
+
         {% if errors %}
         <div class="alert alert-warning">
             <strong>Some files could not be processed:</strong>
@@ -41,7 +61,7 @@
                 <div class="score-bars">
                     <div class="score-bar-group">
                         <div class="bar-label">
-                            <span>Skills Match (25%)</span>
+                            <span>Skills Match (40%)</span>
                             <span>{{ r.skills.match_percentage }}%</span>
                         </div>
                         <div class="bar-track">
@@ -68,20 +88,11 @@
                     </div>
                     <div class="score-bar-group">
                         <div class="bar-label">
-                            <span>Experience (15%)</span>
+                            <span>Experience (20%)</span>
                             <span>{{ r.experience.score }}%</span>
                         </div>
                         <div class="bar-track">
                             <div class="bar-fill exp-bar" style="width: {{ r.experience.score }}%"></div>
-                        </div>
-                    </div>
-                    <div class="score-bar-group">
-                        <div class="bar-label">
-                            <span>Location Match (10%)</span>
-                            <span>{{ r.location.score }}%</span>
-                        </div>
-                        <div class="bar-track">
-                            <div class="bar-fill location-bar" style="width: {{ r.location.score }}%"></div>
                         </div>
                     </div>
                     <div class="score-bar-group">
@@ -91,15 +102,6 @@
                         </div>
                         <div class="bar-track">
                             <div class="bar-fill roles-bar" style="width: {{ r.roles.score }}%"></div>
-                        </div>
-                    </div>
-                    <div class="score-bar-group">
-                        <div class="bar-label">
-                            <span>Profile Completeness (10%)</span>
-                            <span>{{ r.completeness.score }}%</span>
-                        </div>
-                        <div class="bar-track">
-                            <div class="bar-fill completeness-bar" style="width: {{ r.completeness.score }}%"></div>
                         </div>
                     </div>
                 </div>
@@ -192,27 +194,8 @@
                     </details>
 
                     <details>
-                        <summary>Location Match</summary>
-                        <p>{{ r.location.summary }}</p>
-                        {% if r.location.relocation_ready %}
-                        <p class="tag tag-matched" style="display: inline-block;">Open to Relocation</p>
-                        {% endif %}
-                    </details>
-
-                    <details>
                         <summary>Roles & Responsibilities</summary>
                         <p>{{ r.roles.summary }}</p>
-                    </details>
-
-                    <details>
-                        <summary>Profile Completeness</summary>
-                        <p>{{ r.completeness.summary }}</p>
-                        {% if r.completeness.sections_found %}
-                        <p><strong>Sections found:</strong> {{ r.completeness.sections_found | join(', ') }}</p>
-                        {% endif %}
-                        {% if r.completeness.sections_missing %}
-                        <p><strong>Sections missing:</strong> {{ r.completeness.sections_missing | join(', ') }}</p>
-                        {% endif %}
                     </details>
 
                     <details>

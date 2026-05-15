@@ -18,15 +18,44 @@
         {% endif %}
 
         <form action="/rank" method="post" enctype="multipart/form-data" id="rankForm">
-            <div class="form-group">
-                <label for="job_description">Job Description</label>
-                <textarea
-                    id="job_description"
-                    name="job_description"
-                    rows="12"
-                    placeholder="Paste the complete job description here including required skills, experience, roles and responsibilities..."
-                    required
-                >{{ job_description if job_description else '' }}</textarea>
+            <div class="jd-structured">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="designation">Designation</label>
+                        <input type="text" id="designation" name="designation"
+                               placeholder="e.g. Frontend Full Stack Developer"
+                               value="{{ designation if designation else '' }}" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="skills">Skills (comma-separated)</label>
+                    <textarea id="skills" name="skills" rows="3"
+                              placeholder="e.g. React.js, JavaScript, HTML5, CSS3, Tailwind CSS, Redux, Java, Spring Boot..."
+                    >{{ skills if skills else '' }}</textarea>
+                </div>
+
+                <div class="form-row form-row-3">
+                    <div class="form-group">
+                        <label for="min_experience">Min Experience (years)</label>
+                        <input type="number" id="min_experience" name="min_experience" min="0" step="0.5"
+                               placeholder="e.g. 1"
+                               value="{{ min_experience if min_experience else '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="max_experience">Max Experience (years)</label>
+                        <input type="number" id="max_experience" name="max_experience" min="0" step="0.5"
+                               placeholder="e.g. 3"
+                               value="{{ max_experience if max_experience else '' }}">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="roles_responsibilities">Roles and Responsibilities</label>
+                    <textarea id="roles_responsibilities" name="roles_responsibilities" rows="6"
+                              placeholder="Describe the key responsibilities for this role..."
+                    >{{ roles_responsibilities if roles_responsibilities else '' }}</textarea>
+                </div>
             </div>
 
             <div class="form-group">

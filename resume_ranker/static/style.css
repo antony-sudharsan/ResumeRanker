@@ -66,6 +66,26 @@ header h1 {
     margin-bottom: 1.5rem;
 }
 
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-row-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+@media (max-width: 600px) {
+    .form-row { flex-direction: column; gap: 0; }
+    .form-row-3 { grid-template-columns: 1fr; }
+}
+
 label {
     display: block;
     font-weight: 600;
@@ -73,7 +93,9 @@ label {
     color: #374151;
 }
 
-textarea {
+textarea,
+input[type="text"],
+input[type="number"] {
     width: 100%;
     padding: 0.75rem 1rem;
     border: 2px solid #d1d5db;
@@ -84,10 +106,55 @@ textarea {
     transition: border-color 0.2s;
 }
 
-textarea:focus {
+textarea:focus,
+input[type="text"]:focus,
+input[type="number"]:focus {
     outline: none;
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* JD structured card */
+.jd-structured {
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* JD Summary on results page */
+.jd-summary {
+    background: white;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.jd-summary h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    margin-bottom: 0.75rem;
+}
+
+.jd-summary-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 1rem;
+    font-size: 0.9rem;
+}
+
+.jd-summary-grid dt {
+    font-weight: 600;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.jd-summary-grid dd {
+    color: #4b5563;
 }
 
 /* File Upload */

@@ -486,9 +486,110 @@ def _find_sentence_with_skill(sentences: list[str], skill: str) -> str | None:
 
 _SECTION_HEADER_LIKE = re.compile(
     r"^(?:(?:required|preferred|core|key|technical|essential|must\s+have|nice\s+to\s+have)\s+)?"
-    r"(?:skills?|qualifications?|competencies|experience|requirements?)\s*:?\s*$",
+    r"(?:skills?|qualifications?|competencies|experience|requirements?)"
+    r"(?:\s*[&]\s*(?:qualifications?|experience|competencies|requirements?))?\s*:?\s*$",
     re.I,
 )
+
+_SUB_HEADER_LIKE = re.compile(
+    r"^(?:technical|leadership|management|core|functional|domain|industry|additional|"
+    r"general|professional|cross-functional|soft|analytical|business|education|"
+    r"certifications?)\s+(?:expertise|skills?|experience|competencies|knowledge|"
+    r"qualifications?|abilities?)"
+    r"(?:\s*[&]\s*(?:management|experience|skills?|knowledge))?\s*$",
+    re.I,
+)
+
+# Words that are common in JD headings / descriptions but are NOT skills
+_NON_SKILL_WORDS: set[str] = {
+    "leadership",
+    "management",
+    "communication",
+    "collaboration",
+    "interpersonal",
+    "organizational",
+    "analytical",
+    "problem-solving",
+    "problem solving",
+    "teamwork",
+    "mentorship",
+    "stakeholder",
+    "cross-functional",
+    "cross functional",
+    "decision-making",
+    "decision making",
+    "strategic",
+    "planning",
+    "innovation",
+    "ownership",
+    "accountability",
+    "initiative",
+    "adaptability",
+    "flexibility",
+    "creativity",
+    "critical thinking",
+    "attention to detail",
+    "time management",
+    "project management",
+    "people management",
+    "team management",
+    "technical expertise",
+    "technical skills",
+    "soft skills",
+    "core competencies",
+    "system architecture",
+    "systems architecture",
+    "software engineering",
+    "production systems",
+    "high-traffic systems",
+    "scalable infrastructure",
+    "deployment strategies",
+    "development workflows",
+    "engineering teams",
+    "development lifecycle",
+    "product development",
+    "business goals",
+    "company goals",
+    "technical roadmaps",
+    "resource planning",
+    "operational excellence",
+    "continuous improvement",
+    "best practices",
+    "coding standards",
+    "performance optimization",
+    "production systems",
+    "high availability",
+    "cross-functional teams",
+}
+
+_DESC_PHRASE = re.compile(
+    r"^(?:experience\s+with|experience\s+in|expertise\s+in|knowledge\s+of|"
+    r"understanding\s+of|proficiency\s+in|familiarity\s+with|background\s+in|"
+    r"proven\s+experience|ability\s+to|proficient\s+in|skilled\s+in|"
+    r"exposure\s+to|hands?.on\s+experience|working\s+knowledge|"
+    r"strong\s+(?:background|knowledge|understanding|experience|proficiency|familiarity|skills|sense|track\s+record|problem.solving|analytical|communication|leadership|technical|foundation|expertise)|"
+    r"deep\s+(?:understanding|knowledge|expertise|experience|familiarity)|"
+    r"solid\s+(?:understanding|knowledge|background|experience|expertise)|"
+    r"extensive\s+(?:experience|knowledge|background|expertise)|"
+    r"demonstrated\s+(?:experience|ability|expertise|success|track\s+record)|"
+    r"proven\s+(?:ability|track\s+record|success|experience)|"
+    r"hand[-\s]on\s+(?:experience|knowledge|expertise))\b",
+    re.I,
+)
+
+
+def _clean_phrase(text: str) -> str | None:
+    text = text.strip().strip("*").strip()
+    text = re.sub(r"\s*\(.*?\)\s*", "", text).strip()
+    if not text or len(text) <= 1 or len(text) > 50:
+        return None
+    # Strip leading conjunctions like "and ", "or "
+    text = re.sub(r"^(?:and|or)\s+", "", text, flags=re.I).strip()
+    # Strip leading filler like "such as ", "including "
+    text = re.sub(r"^(?:such\s+as|including|e\.g\.|i\.e\.)\s+", "", text, flags=re.I).strip()
+    if not text or len(text) <= 1:
+        return None
+    return text
 
 
 def _extract_skill_phrases(text: str) -> list[str]:
@@ -502,15 +603,21 @@ def _extract_skill_phrases(text: str) -> list[str]:
             continue
         if _SECTION_HEADER_LIKE.match(cleaned):
             continue
+        if _SUB_HEADER_LIKE.match(cleaned):
+            continue
         parts = re.split(r"\s*,\s*", cleaned)
         for part in parts:
             part = part.strip()
             sub_parts = re.split(r"\s+/\s+|\s+&\s+", part)
             for sub in sub_parts:
-                sub = sub.strip().strip("*").strip()
-                sub = re.sub(r"\s*\(.*?\)\s*", "", sub).strip()
-                if sub and len(sub) > 1 and len(sub) <= 50:
-                    phrases.append(sub)
+                sub = _clean_phrase(sub)
+                if sub is None:
+                    continue
+                if _DESC_PHRASE.match(sub):
+                    continue
+                if sub.lower() in _NON_SKILL_WORDS:
+                    continue
+                phrases.append(sub)
     return phrases
 
 

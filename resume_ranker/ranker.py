@@ -85,28 +85,6 @@ class TitleAnalysis:
 
 
 @dataclass
-class LocationAnalysis:
-    """Analysis of location/relocation match."""
-
-    jd_location: str = ""
-    candidate_location: str = ""
-    relocation_ready: bool = False
-    score: float = 0.0
-    summary: str = ""
-
-
-@dataclass
-class ProfileCompletenessAnalysis:
-    """Analysis of resume/profile completeness."""
-
-    sections_found: list[str] = field(default_factory=list)
-    sections_missing: list[str] = field(default_factory=list)
-    word_count: int = 0
-    score: float = 0.0
-    summary: str = ""
-
-
-@dataclass
 class CandidateResult:
     """Complete ranking result for a single candidate."""
 
@@ -118,20 +96,14 @@ class CandidateResult:
     roles_analysis: RolesAnalysis = field(default_factory=RolesAnalysis)
     semantic_analysis: SemanticAnalysis = field(default_factory=SemanticAnalysis)
     title_analysis: TitleAnalysis = field(default_factory=TitleAnalysis)
-    location_analysis: LocationAnalysis = field(default_factory=LocationAnalysis)
-    completeness_analysis: ProfileCompletenessAnalysis = field(
-        default_factory=ProfileCompletenessAnalysis
-    )
     justification: str = ""
 
     # LinkedIn-style weight configuration
-    SKILL_WEIGHT: float = 0.25
+    SKILL_WEIGHT: float = 0.40
     SEMANTIC_WEIGHT: float = 0.20
     TITLE_WEIGHT: float = 0.10
-    EXPERIENCE_WEIGHT: float = 0.15
-    LOCATION_WEIGHT: float = 0.10
+    EXPERIENCE_WEIGHT: float = 0.20
     ROLES_WEIGHT: float = 0.10
-    COMPLETENESS_WEIGHT: float = 0.10
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +124,7 @@ _REQUIRED_SKILLS_HEADERS = re.compile(
     r"(?:skills?|qualifications?|requirements?|competencies|technical\s+skills?)",
     re.IGNORECASE,
 )
-_SECTION_HEADER = re.compile(r"^(?:#{1,4}\s+)?[A-Z][A-Za-z &/,\-–]+$", re.MULTILINE)
+_SECTION_HEADER = re.compile(r"^(?:#{1,2}\s+)?[A-Z][A-Za-z &/,\-–]+$", re.MULTILINE)
 
 
 def _find_section_range(
@@ -464,34 +436,6 @@ def _analyze_title(jd_text: str, resume_text: str) -> TitleAnalysis:
     )
 
 
-def _analyze_location(jd_text: str, resume_text: str) -> LocationAnalysis:
-    """Analyze location alignment."""
-    from resume_ranker.signals import analyze_location
-
-    result = analyze_location(jd_text, resume_text)
-    return LocationAnalysis(
-        jd_location=result.jd_location,
-        candidate_location=result.candidate_location,
-        relocation_ready=result.relocation_ready,
-        score=result.score,
-        summary=result.summary,
-    )
-
-
-def _analyze_completeness(resume_text: str) -> ProfileCompletenessAnalysis:
-    """Analyze profile/resume completeness."""
-    from resume_ranker.signals import analyze_profile_completeness
-
-    result = analyze_profile_completeness(resume_text)
-    return ProfileCompletenessAnalysis(
-        sections_found=result.sections_found,
-        sections_missing=result.sections_missing,
-        word_count=result.word_count,
-        score=result.score,
-        summary=result.summary,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Justification
 # ---------------------------------------------------------------------------
@@ -567,14 +511,6 @@ def _generate_justification(result: CandidateResult) -> str:
             parts.append(f"  ⚠ {w}")
     parts.append("")
 
-    # Location
-    loc = result.location_analysis
-    parts.append(
-        f"LOCATION (score: {loc.score:.0f}/100, weight: {CandidateResult.LOCATION_WEIGHT:.0%})"
-    )
-    parts.append(f"  {loc.summary}")
-    parts.append("")
-
     # Roles
     parts.append(
         f"ROLES & RESPONSIBILITIES "
@@ -583,14 +519,6 @@ def _generate_justification(result: CandidateResult) -> str:
     )
     parts.append(f"  {result.roles_analysis.summary}")
     parts.append("")
-
-    # Completeness
-    comp = result.completeness_analysis
-    parts.append(
-        f"PROFILE COMPLETENESS (score: {comp.score:.0f}/100, weight: "
-        f"{CandidateResult.COMPLETENESS_WEIGHT:.0%})"
-    )
-    parts.append(f"  {comp.summary}")
 
     return "\n".join(parts)
 
@@ -607,13 +535,11 @@ def rank_candidates(
     """Rank candidates against a job description using LinkedIn-style signals.
 
     Scoring weights:
-        Skills Match:         25%  (keyword matching with skill inference)
+        Skills Match:         40%  (keyword matching with skill inference)
         Semantic AI Match:    20%  (meaning-based NLP matching)
         Title Relevance:      10%  (job title alignment)
-        Experience:           15%  (years of experience)
-        Location Match:       10%  (location/relocation readiness)
+        Experience:           20%  (years of experience)
         Roles Alignment:      10%  (TF-IDF responsibilities matching)
-        Profile Completeness: 10%  (resume detail level)
     """
     results: list[CandidateResult] = []
 
@@ -623,17 +549,12 @@ def rank_candidates(
         roles_analysis = _analyze_roles(jd_text, resume_text)
         semantic_analysis = _analyze_semantic(jd_text, resume_text)
         title_analysis = _analyze_title(jd_text, resume_text)
-        location_analysis = _analyze_location(jd_text, resume_text)
-        completeness_analysis = _analyze_completeness(resume_text)
-
         overall = (
             skill_analysis.match_percentage * CandidateResult.SKILL_WEIGHT
             + semantic_analysis.score * CandidateResult.SEMANTIC_WEIGHT
             + title_analysis.score * CandidateResult.TITLE_WEIGHT
             + exp_analysis.score * CandidateResult.EXPERIENCE_WEIGHT
-            + location_analysis.score * CandidateResult.LOCATION_WEIGHT
             + roles_analysis.similarity_score * CandidateResult.ROLES_WEIGHT
-            + completeness_analysis.score * CandidateResult.COMPLETENESS_WEIGHT
         )
 
         result = CandidateResult(
@@ -644,8 +565,6 @@ def rank_candidates(
             roles_analysis=roles_analysis,
             semantic_analysis=semantic_analysis,
             title_analysis=title_analysis,
-            location_analysis=location_analysis,
-            completeness_analysis=completeness_analysis,
         )
         results.append(result)
 
