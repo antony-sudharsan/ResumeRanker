@@ -56,17 +56,22 @@ def _result_to_dict(r: CandidateResult) -> dict:
             "extra": r.skill_analysis.extra_skills,
             "inferred": r.skill_analysis.inferred_skills,
         },
-        "semantic": {
-            "score": round(r.semantic_analysis.score, 1),
-            "summary": r.semantic_analysis.summary,
-        },
-        "title": {
+        "designation": {
             "score": round(r.title_analysis.score, 1),
             "jd_title": r.title_analysis.jd_title,
             "candidate_titles": [t["title"] for t in r.title_analysis.candidate_titles],
             "candidate_titles_detail": r.title_analysis.candidate_titles,
             "summary": r.title_analysis.summary,
             "debug": r.title_analysis.debug,
+        },
+        "roles": {
+            "score": round(r.roles_analysis.score, 1),
+            "summary": r.roles_analysis.summary,
+            "tfidf_score": round(r.roles_analysis.tfidf_score, 1),
+            "semantic_score": round(r.roles_analysis.semantic_score, 1),
+            "action_verb_score": round(r.roles_analysis.action_verb_score, 1),
+            "section_confidence": round(r.roles_analysis.section_confidence, 1),
+            "best_role_matches": r.roles_analysis.best_role_matches,
         },
         "experience": {
             "score": round(r.experience_analysis.score, 1),
@@ -99,6 +104,13 @@ async def rank_resumes(
     """Process uploaded resumes and rank them against the structured job description."""
     candidates: list[tuple[str, str]] = []
     errors: list[str] = []
+
+    if len(resumes) > 5:
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            context={"error": "Maximum 5 resumes allowed per ranking."},
+        )
 
     for resume_file in resumes:
         if not resume_file.filename:
@@ -155,6 +167,9 @@ async def api_rank_resumes(
     """API endpoint returning JSON ranking results."""
     candidates: list[tuple[str, str]] = []
     errors: list[str] = []
+
+    if len(resumes) > 5:
+        return {"error": "Maximum 5 resumes allowed per ranking."}
 
     for resume_file in resumes:
         if not resume_file.filename:

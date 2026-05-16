@@ -2,6 +2,7 @@
 
 from resume_ranker.experience import (
     analyze_experience_full,
+    calculate_relevant_experience_fit,
     calculate_relevant_experience_months,
     calculate_total_experience_months,
     combine_experience,
@@ -764,3 +765,575 @@ Jan 2021 - Jan 2024
     # General → primary = total score
     assert result.get("is_domain_specific") is False
     assert result["final_experience_score"] < 70
+
+
+# ==============================================================================
+# New Experience Ranking System Tests
+# ==============================================================================
+
+
+# Test 1: Basic total experience extraction
+TEST1_RESUME = """Software Engineer
+Jan 2021 - Jan 2024
+- Built APIs
+"""
+
+
+def test_new_total_experience_months():
+    """Jan 2021 - Jan 2024 should yield 36 months total experience."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(TEST1_RESUME)
+    assert len(periods) >= 1
+    assert periods[0]["months"] == 36
+
+
+# Test 2: Education dates excluded
+TEST2_RESUME = """Professional Experience:
+Software Engineer | ABC Corp
+Jan 2020 - Present
+
+Education:
+Bachelor of Science
+2018 - 2022
+"""
+
+
+def test_new_education_dates_excluded():
+    """Education section dates should not be counted as work experience."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(TEST2_RESUME)
+    # Only the Professional Experience period should be found (education excluded)
+    assert len([p for p in periods if p.get("section") != "education"]) >= 1
+    # Education dated periods should not exist
+    edu_dated = [p for p in periods if p.get("end_year") == 2022 and p.get("start_year") == 2018]
+    assert len(edu_dated) == 0
+
+
+# Test 3: Internship weighting
+TEST3_RESUME = """Software Engineer Intern
+Jan 2023 - Jan 2024
+- Assisted with development
+"""
+
+
+def test_new_internship_weighting():
+    """12 months extracted, 6 weighted months for internship."""
+    from resume_ranker.experience import (
+        calculate_total_experience_months,
+        extract_experience_periods,
+    )
+
+    periods = extract_experience_periods(TEST3_RESUME)
+    assert len(periods) >= 1
+    assert periods[0]["employment_type"] == "internship"
+    assert periods[0]["months"] == 12
+    total_months = calculate_total_experience_months(periods)
+    assert abs(total_months - 6.0) < 0.1
+
+
+# Test 4: Volunteer weighting
+TEST4_RESUME = """Volunteer Assistant
+Jul 2018 - Jul 2019
+- Helped organize events
+"""
+
+
+def test_new_volunteer_weighting():
+    """12 months extracted, 3.6 weighted months for volunteer."""
+    from resume_ranker.experience import (
+        calculate_total_experience_months,
+        extract_experience_periods,
+    )
+
+    periods = extract_experience_periods(TEST4_RESUME)
+    assert len(periods) >= 1
+    vol = [p for p in periods if p["employment_type"] == "volunteer"]
+    assert len(vol) >= 1
+    assert vol[0]["months"] == 12
+    total_months = calculate_total_experience_months(periods)
+    assert abs(total_months - 3.6) < 0.1
+
+
+# Test 5: Current role with Present
+TEST5_RESUME = """Frontend Developer
+Jan 2020 - Present
+- Built UI components
+"""
+
+
+def test_new_current_role():
+    """Present should calculate until today."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(TEST5_RESUME)
+    assert len(periods) >= 1
+    assert periods[0]["is_current"] is True
+    # Jan 2020 to ~May 2026 should be > 72 months
+    assert periods[0]["months"] >= 72
+
+
+# Test 6: High relevant experience score
+TEST6_RESUME = """Frontend Developer | Tech Co
+Jan 2021 - Jan 2024
+- Worked with React, Redux, TypeScript
+- Built responsive UI components
+"""
+
+
+def test_new_high_relevant_experience():
+    """React Developer with matching skills should score high."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(TEST6_RESUME)
+    assert len(periods) >= 1
+
+    jd_title = "React Developer"
+    jd_skills = {"react", "redux", "typescript", "css", "html"}
+    result = calculate_relevant_experience_fit(
+        periods, jd_title, jd_skills, "Build UI components with React", 3.0
+    )
+    # Should have moderate-high relevance for matching skills + role family
+    assert result["relevant_experience_fit"] > 40
+
+
+# Test 7: Low relevant experience score
+TEST7_RESUME = """Data Analyst | Corp Inc
+Jan 2021 - Jan 2024
+- Worked with Tableau, SQL, Power BI
+- Built dashboards and reports
+"""
+
+
+def test_new_low_relevant_experience():
+    """Data Analyst for React Developer JD should score low."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(TEST7_RESUME)
+    assert len(periods) >= 1
+
+    jd_title = "React Developer"
+    jd_skills = {"react", "redux", "typescript", "css", "html"}
+    result = calculate_relevant_experience_fit(
+        periods, jd_title, jd_skills, "Build UI components with React", 3.0
+    )
+    assert result["relevant_experience_fit"] < 50
+
+
+# Test 8: False positive protection
+TEST8_RESUME = """Delivered $75M+ impact and supported 50 users."""
+
+
+def test_new_false_positive_protection():
+    """$75M and 50 users should not be extracted as experience years."""
+    from resume_ranker.experience import extract_years_of_experience
+
+    result = extract_years_of_experience(TEST8_RESUME)
+    assert result is None
+
+
+# ==============================================================================
+# compute_experience_ranking integration tests
+# ==============================================================================
+
+
+def test_compute_experience_ranking_basic():
+    """Full compute_experience_ranking returns expected structure."""
+    from resume_ranker.experience import compute_experience_ranking, extract_experience_periods
+
+    resume = """Software Engineer | Tech Co
+Jan 2021 - Jan 2024
+- Built Python applications
+"""
+    periods = extract_experience_periods(resume)
+    result = compute_experience_ranking(
+        periods, "Python Developer", {"python", "django"}, "Build applications", 3.0
+    )
+
+    assert "experience_score" in result
+    assert "total_years" in result
+    assert "relevant_years" in result
+    assert "total_experience_fit" in result
+    assert "relevant_experience_fit" in result
+    assert "recency_score" in result
+    assert "seniority_fit" in result
+    assert "periods" in result
+    assert result["experience_score"] >= 0
+    assert result["experience_score"] <= 100
+
+
+def test_compute_experience_ranking_empty():
+    """Empty periods should not crash."""
+    from resume_ranker.experience import compute_experience_ranking
+
+    result = compute_experience_ranking([], "Developer", set(), "", 3.0)
+    assert result["experience_score"] >= 0
+
+
+def test_compute_experience_ranking_no_jd_req():
+    """No JD requirement should still produce a score."""
+    from resume_ranker.experience import compute_experience_ranking, extract_experience_periods
+
+    resume = """Software Engineer
+Jan 2021 - Jan 2024
+"""
+    periods = extract_experience_periods(resume)
+    result = compute_experience_ranking(periods, "Developer", set(), "", None)
+    assert result["experience_score"] >= 0
+
+
+# ==============================================================================
+# Seniority Fit tests
+# ==============================================================================
+
+
+def test_seniority_fit_same_level():
+    """Same seniority level should score 100."""
+    from resume_ranker.experience import calculate_seniority_fit
+
+    periods = [
+        {
+            "title": "Senior Software Engineer",
+            "is_current": True,
+            "end_year": 2026,
+            "end_month": 5,
+        }
+    ]
+    score = calculate_seniority_fit(periods, "Senior Developer")
+    assert score == 100.0
+
+
+def test_seniority_fit_one_below():
+    """One level below should score 85."""
+    from resume_ranker.experience import calculate_seniority_fit
+
+    periods = [
+        {
+            "title": "Software Engineer",
+            "is_current": True,
+            "end_year": 2026,
+            "end_month": 5,
+        }
+    ]
+    score = calculate_seniority_fit(periods, "Senior Developer")
+    assert score == 85.0
+
+
+def test_seniority_fit_above():
+    """Above JD level should still score high (≥85)."""
+    from resume_ranker.experience import calculate_seniority_fit
+
+    periods = [
+        {
+            "title": "Senior Software Engineer",
+            "is_current": True,
+            "end_year": 2026,
+            "end_month": 5,
+        }
+    ]
+    score = calculate_seniority_fit(periods, "Junior Developer")
+    # Senior (idx 4) vs Junior (idx 1), diff=3 → 90
+    assert score >= 85
+
+
+# ==============================================================================
+# Total Experience Fit tests
+# ==============================================================================
+
+
+def test_total_experience_fit_meets_req():
+    """Candidate meets JD required years → 100."""
+    from resume_ranker.experience import calculate_total_experience_fit
+
+    periods = [
+        {
+            "start_year": 2020,
+            "start_month": 1,
+            "end_year": 2023,
+            "end_month": 1,
+            "months": 36,
+            "employment_type": "full_time",
+        }
+    ]
+    score, years = calculate_total_experience_fit(periods, 3.0)
+    assert score == 100.0
+
+
+def test_total_experience_fit_below():
+    """Candidate below requirement → penalized."""
+    from resume_ranker.experience import calculate_total_experience_fit
+
+    periods = [
+        {
+            "start_year": 2022,
+            "start_month": 1,
+            "end_year": 2023,
+            "end_month": 1,
+            "months": 12,
+            "employment_type": "full_time",
+        }
+    ]
+    score, years = calculate_total_experience_fit(periods, 3.0)
+    # deficit = 2 years → max(10, 100 - 2*18) = 64
+    assert score == 64.0
+
+
+def test_total_experience_fit_above():
+    """Candidate above requirement → gentle penalty."""
+    from resume_ranker.experience import calculate_total_experience_fit
+
+    periods = [
+        {
+            "start_year": 2018,
+            "start_month": 1,
+            "end_year": 2026,
+            "end_month": 1,
+            "months": 96,
+            "employment_type": "full_time",
+        }
+    ]
+    score, years = calculate_total_experience_fit(periods, 3.0)
+    # extra = 5 years → max(75, 100 - 5*3) = 85
+    assert score == 85.0
+
+
+# ==============================================================================
+# Recency Score tests
+# ==============================================================================
+
+
+def test_recency_score_current():
+    """Current relevant role → 95."""
+    from resume_ranker.experience import calculate_recency_score
+
+    periods = [
+        {
+            "title": "Frontend Developer",
+            "description": "Built React apps",
+            "is_current": True,
+            "end_year": 2026,
+            "end_month": 5,
+        }
+    ]
+    score = calculate_recency_score(periods, "React Developer", {"react", "redux"})
+    assert score == 95.0
+
+
+def test_recency_score_no_relevant():
+    """No relevant role found → 30."""
+    from resume_ranker.experience import calculate_recency_score
+
+    periods = [
+        {
+            "title": "Bartender",
+            "description": "Served drinks",
+            "is_current": False,
+            "end_year": 2020,
+            "end_month": 1,
+        }
+    ]
+    score = calculate_recency_score(periods, "React Developer", {"react", "redux"})
+    assert score == 30.0
+
+
+def test_recency_score_empty():
+    """Empty periods → 30."""
+    from resume_ranker.experience import calculate_recency_score
+
+    assert calculate_recency_score([], "Developer", set()) == 30.0
+
+
+# ==============================================================================
+# New date format accuracy tests
+# ==============================================================================
+
+
+RESUME_NUMERIC_DATES = """Software Engineer | ABC
+01/2020 - 01/2024
+- Built APIs
+"""
+
+
+def test_numeric_date_format():
+    """MM/YYYY date format should be extracted correctly."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_NUMERIC_DATES)
+    assert len(periods) >= 1
+    assert periods[0]["months"] == 48
+    assert periods[0]["start_month"] == 1
+    assert periods[0]["start_year"] == 2020
+    assert periods[0]["end_year"] == 2024
+
+
+RESUME_DOT_DATE = """Software Engineer | ABC
+01.2020 - 01.2024
+- Built APIs
+"""
+
+
+def test_dot_date_format():
+    """MM.YYYY date format should be extracted correctly."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_DOT_DATE)
+    assert len(periods) >= 1
+    assert periods[0]["months"] == 48
+
+
+RESUME_TWO_DIGIT_YEAR = """Software Engineer | ABC
+Jan 21 - Jan 24
+- Built APIs
+"""
+
+
+def test_two_digit_year_format():
+    """Two-digit years after month names should be extracted (Jan 21 → Jan 2021)."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_TWO_DIGIT_YEAR)
+    assert len(periods) >= 1
+    assert periods[0]["start_year"] == 2021
+    assert periods[0]["end_year"] == 2024
+    assert periods[0]["months"] == 36
+
+
+RESUME_APOSTROPHE_YEAR = """Software Engineer | ABC
+Jan '21 - Present
+- Built APIs
+"""
+
+
+def test_apostrophe_year_format():
+    """Apostrophe years ('21) should be normalized to 2021."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_APOSTROPHE_YEAR)
+    assert len(periods) >= 1
+    assert periods[0]["start_year"] == 2021
+    assert periods[0]["is_current"] is True
+
+
+RESUME_YEAR_ONLY = """Software Engineer | ABC
+2020 - 2024
+- Built APIs
+"""
+
+
+def test_year_only_format():
+    """Year-only ranges (2020 - 2024) should be extracted."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_YEAR_ONLY)
+    assert len(periods) >= 1
+    assert periods[0]["start_year"] == 2020
+    assert periods[0]["start_month"] == 1
+    assert periods[0]["end_year"] == 2024
+    assert periods[0]["end_month"] == 12
+    # Jan 2020 - Dec 2024 = 59 full months (end-exclusive)
+    assert periods[0]["months"] == 59
+
+
+RESUME_SEPT_MONTH = """Software Engineer | ABC
+Sept 2020 - Present
+- Built APIs
+"""
+
+
+def test_sept_abbreviation():
+    """'Sept' abbreviation should be recognized (UK/Canada common)."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_SEPT_MONTH)
+    assert len(periods) >= 1
+    assert periods[0]["start_month"] == 9
+    assert periods[0]["start_year"] == 2020
+
+
+RESUME_CAREER_HISTORY = """Career History:
+Software Engineer | ABC
+Jan 2020 - Present
+"""
+
+
+def test_career_history_header():
+    """'Career History' section header should be recognized."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_CAREER_HISTORY)
+    assert len(periods) >= 1
+
+
+def test_skills_does_not_leak_into_experience():
+    """Skills section after experience should not contaminate experience dates."""
+    from resume_ranker.experience import extract_experience_periods
+
+    resume = """Professional Experience:
+Software Engineer | ABC
+Jan 2020 - Present
+
+Skills: Python, AWS
+Since 2022
+"""
+    periods = extract_experience_periods(resume)
+    # Only the experience period should be found, not the skills dates
+    assert len(periods) == 1
+
+
+RESUME_PROFESSIONAL_BACKGROUND = """Professional Background:
+Software Engineer | ABC
+Jan 2020 - Present
+"""
+
+
+def test_professional_background_header():
+    """'Professional Background' section header should be recognized."""
+    from resume_ranker.experience import extract_experience_periods
+
+    periods = extract_experience_periods(RESUME_PROFESSIONAL_BACKGROUND)
+    assert len(periods) >= 1
+
+
+def test_title_cleaned_from_date_line():
+    """Title on same line as date should be cleaned properly."""
+    from resume_ranker.experience import extract_experience_periods
+
+    resume = """Software Engineer | ABC Corp | Jan 2020 - Present
+- Built microservices
+"""
+    periods = extract_experience_periods(resume)
+    assert len(periods) >= 1
+    # Title should be just the role, not include the date
+    assert "Jan" not in periods[0]["title"]
+    assert "2020" not in periods[0]["title"]
+
+
+def test_end_month_defaults_to_december():
+    """Year-only end dates should default to December (not January)."""
+    from resume_ranker.experience import extract_experience_periods
+
+    resume = """Software Engineer | ABC
+Jan 2020 - 2024
+"""
+    periods = extract_experience_periods(resume)
+    assert len(periods) >= 1
+    assert periods[0]["end_month"] == 12
+    # Jan 2020 - Dec 2024 = 59 months (end-exclusive) vs 48 if end was Jan 2024
+    assert periods[0]["months"] == 59
+
+
+def test_multi_month_numeric_date():
+    """Numeric dates with different separators are handled."""
+    from resume_ranker.experience import extract_experience_periods
+
+    resume = """Data Analyst | Corp
+03/2021 - 08/2023
+- Analyzed data
+"""
+    periods = extract_experience_periods(resume)
+    assert len(periods) >= 1
+    assert periods[0]["start_month"] == 3
+    assert periods[0]["end_month"] == 8
+    assert periods[0]["start_year"] == 2021
+    assert periods[0]["end_year"] == 2023

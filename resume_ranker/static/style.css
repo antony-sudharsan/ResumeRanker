@@ -205,6 +205,26 @@ input[type="number"]:focus {
     font-size: 0.9rem;
 }
 
+.file-item-with-remove {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.btn-remove {
+    background: none;
+    border: none;
+    color: #991b1b;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 0.25rem;
+    line-height: 1;
+}
+
+.btn-remove:hover {
+    color: #dc2626;
+}
+
 /* Buttons */
 .btn-primary {
     display: inline-block;

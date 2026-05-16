@@ -6,6 +6,9 @@ import re
 from datetime import date
 from typing import Any
 
+from resume_ranker.semantic import semantic_similarity
+from resume_ranker.signals import detect_seniority
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -38,25 +41,54 @@ MONTH_NAMES: dict[str, int] = {
 
 MONTH_PATTERN = (
     r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
-    r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|"
+    r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|"
     r"Nov(?:ember)?|Dec(?:ember)?)"
 )
 
 _DATE_RANGE_REGEX = re.compile(
     rf"""
     (?:
-        (?P<sm>{MONTH_PATTERN})
-        \s*
-    )?
-    (?P<sy>\d{{4}})
+        # Start with month name (e.g., Jan 2021)
+        (?:
+            (?P<sm>{MONTH_PATTERN})
+            \s*
+            (?P<sy>\d{{4}})
+        )
+        |
+        # Start with numeric month (e.g., 01/2021, 01.2021)
+        (?:
+            (?P<sm_num>\d{{1,2}})
+            [/\.]
+            (?P<sy_num>\d{{4}})
+        )
+        |
+        # Start with year only (e.g., 2021)
+        (?P<sy_only>\d{{4}})
+    )
     \s*
     (?:-|\u2013|\u2014|to)
     \s*
     (?:
-        (?P<em>{MONTH_PATTERN})
-        \s*
-    )?
-    (?P<ey>\d{{4}}|Present|Current)
+        # End with month name (e.g., Jan 2024)
+        (?:
+            (?P<em>{MONTH_PATTERN})
+            \s*
+            (?P<ey>\d{{4}})
+        )
+        |
+        # End with numeric month (e.g., 01/2024, 01.2024)
+        (?:
+            (?P<em_num>\d{{1,2}})
+            [/\.]
+            (?P<ey_num>\d{{4}})
+        )
+        |
+        # Present/Current/Now
+        (?P<end_now>Present|Current|Now)
+        |
+        # End with year only (e.g., 2024)
+        (?P<ey_only>\d{{4}})
+    )
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -74,7 +106,9 @@ _SECTION_HEADER = re.compile(
 )
 
 _EXPERIENCE_HEADERS = re.compile(
-    r"(?:professional\s+)?(?:experience|work\s+experience|employment|work\s+history)",
+    r"(?:professional\s+)?(?:experience|work\s+experience|employment|work\s+history|"
+    r"career\s+history|professional\s+(?:background|history)|technical\s+experience|"
+    r"industry\s+experience|relevant\s+experience)",
     re.IGNORECASE,
 )
 
@@ -92,6 +126,15 @@ _EXCLUDED_HEADERS = re.compile(
 
 _VOLUNTEER_HEADER = re.compile(r"volunteer", re.IGNORECASE)
 
+# Other section headers that should create boundaries (prevent content bleed)
+_OTHER_HEADERS = re.compile(
+    r"(?:skills|technical\s+skills|core\s+competencies|technologies|"
+    r"summary|professional\s+summary|profile|objective|"
+    r"languages?|interests|activities|references|"
+    r"achievements|accomplishments|additional\s+experience)",
+    re.IGNORECASE,
+)
+
 # Safety: rejection words near a number match
 _REJECT_NEAR = re.compile(
     r"\$[\d]|%|"
@@ -105,7 +148,8 @@ _ROLE_TITLE_KEYWORDS = re.compile(
     r"(?:engineer|developer|intern|manager|architect|lead|analyst|"
     r"scientist|consultant|specialist|coordinator|administrator|"
     r"associate|director|head|chief|officer|supervisor|representative|"
-    r"trainee|apprentice|freelancer|contractor)",
+    r"trainee|apprentice|freelancer|contractor|designer|technician|"
+    r"assistant|researcher|writer|editor|clerk)",
     re.IGNORECASE,
 )
 
@@ -275,6 +319,57 @@ def _determine_employment_type(title: str, company: str, section_type: str) -> s
 
 
 # ---------------------------------------------------------------------------
+# Date normalization helpers
+# ---------------------------------------------------------------------------
+
+
+_MONTH_NUM_TO_NAME: dict[str, str] = {
+    "1": "Jan",
+    "2": "Feb",
+    "3": "Mar",
+    "4": "Apr",
+    "5": "May",
+    "6": "Jun",
+    "7": "Jul",
+    "8": "Aug",
+    "9": "Sep",
+    "10": "Oct",
+    "11": "Nov",
+    "12": "Dec",
+    "01": "Jan",
+    "02": "Feb",
+    "03": "Mar",
+    "04": "Apr",
+    "05": "May",
+    "06": "Jun",
+    "07": "Jul",
+    "08": "Aug",
+    "09": "Sep",
+}
+
+
+def _normalize_dates(text: str) -> str:
+    text = re.sub(
+        rf"({MONTH_PATTERN})\s+(\d{{2}})(?!\d)",
+        lambda m: (
+            f"{m.group(1)} 20{m.group(2)}"
+            if int(m.group(2)) <= 30
+            else f"{m.group(1)} 19{m.group(2)}"
+        ),
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"'(\d{2})\b", r"20\1", text)
+    return text
+
+
+def _parse_end_month(month_str: str | None) -> int:
+    if not month_str:
+        return 12
+    return MONTH_NAMES.get(month_str.strip().lower()[:3], 12)
+
+
+# ---------------------------------------------------------------------------
 # 1. Date-based experience extraction
 # ---------------------------------------------------------------------------
 
@@ -311,6 +406,8 @@ def _classify_all_sections(text: str) -> list[tuple[str, int, int]]:
             new_type = "excluded"
         elif _VOLUNTEER_HEADER.search(lower):
             new_type = "volunteer"
+        elif _OTHER_HEADERS.search(lower):
+            new_type = "other"
         else:
             continue  # Not a known section header; keep current section
 
@@ -361,28 +458,60 @@ def _extract_periods_from_block(block: str, section_type: str) -> list[dict[str,
     today = date.today()
 
     for i, line in enumerate(lines):
-        for match in _DATE_RANGE_REGEX.finditer(line):
+        normalized_line = _normalize_dates(line)
+        for match in _DATE_RANGE_REGEX.finditer(normalized_line):
             sm_str = match.group("sm")
             sy_str = match.group("sy")
+            sm_num_str = match.group("sm_num")
+            sy_num_str = match.group("sy_num")
+            sy_only_str = match.group("sy_only")
             em_str = match.group("em")
             ey_str = match.group("ey")
+            em_num_str = match.group("em_num")
+            ey_num_str = match.group("ey_num")
+            ey_only_str = match.group("ey_only")
+            end_now_str = match.group("end_now")
 
-            start_year = int(sy_str)
-            start_month = _parse_month(sm_str)
+            if sy_str is not None:
+                start_year = int(sy_str)
+                start_month = _parse_month(sm_str)
+            elif sy_num_str is not None:
+                start_year = int(sy_num_str)
+                start_month = int(sm_num_str)
+            else:
+                start_year = int(sy_only_str)
+                start_month = 1
 
-            if ey_str.lower() in ("present", "current"):
+            if end_now_str is not None:
                 end_year = today.year
                 end_month = today.month
-            else:
+            elif ey_str is not None:
                 end_year = int(ey_str)
-                end_month = _parse_month(em_str)
+                end_month = _parse_end_month(em_str)
+            elif ey_num_str is not None:
+                end_year = int(ey_num_str)
+                end_month = int(em_num_str)
+            else:
+                end_year = int(ey_only_str)
+                end_month = 12
 
             months = _months_between(start_year, start_month, end_year, end_month)
             if months <= 0:
                 continue
 
-            title = line.strip()
-            company = lines[i - 1].strip() if i > 0 else ""
+            date_line = line.strip()
+            prefix = _DATE_RANGE_REGEX.sub("", date_line).strip()
+            prefix = re.sub(r"\s*[|–—]\s*$", "", prefix).strip()
+
+            if prefix and len(prefix) > 3:
+                parts = re.split(r"\s*[|–—]\s*", prefix, maxsplit=1)
+                title = parts[0].strip()
+                company = parts[1].strip() if len(parts) >= 2 else ""
+                if not company:
+                    company = lines[i - 1].strip() if i > 0 else ""
+            else:
+                title = lines[i - 1].strip() if i > 0 else ""
+                company = lines[i - 2].strip() if i > 1 else ""
 
             # Grab follow-on bullet points for context (up to 4 lines)
             bullet_lines: list[str] = []
@@ -395,12 +524,11 @@ def _extract_periods_from_block(block: str, section_type: str) -> list[dict[str,
                 bullet_lines.append(bl)
 
             context = f"{title} {company} {' '.join(bullet_lines)}"
+            description = "\n".join(bullet_lines)
 
             employment_type = _determine_employment_type(title, company, section_type)
 
             # Skip company header lines that have redundant date ranges
-            # (e.g., "Company – Onsite Jan 2020 – Present" followed by
-            #  "Job Title Jan 2020 – Present" on the next line)
             if _is_company_header_line(line):
                 has_role_date_nearby = False
                 for j in range(i + 1, min(i + 4, len(lines))):
@@ -411,16 +539,16 @@ def _extract_periods_from_block(block: str, section_type: str) -> list[dict[str,
                 if has_role_date_nearby:
                     continue
 
-            start_date_str = (
-                f"{_month_name(start_month)} {start_year}" if sm_str else str(start_year)
-            )
-            end_date_str = f"{_month_name(end_month)} {end_year}" if em_str else str(end_year)
+            is_current = end_now_str is not None
+            start_date_str = f"{start_year:04d}-{start_month:02d}"
+            end_date_str = f"{end_year:04d}-{end_month:02d}"
 
             periods.append(
                 {
                     "title": title,
                     "company": company,
                     "context": context,
+                    "description": description,
                     "start_date": start_date_str,
                     "end_date": end_date_str,
                     "start_year": start_year,
@@ -428,6 +556,7 @@ def _extract_periods_from_block(block: str, section_type: str) -> list[dict[str,
                     "end_year": end_year,
                     "end_month": end_month,
                     "months": months,
+                    "is_current": is_current,
                     "section": section_type,
                     "employment_type": employment_type,
                 }
@@ -765,6 +894,7 @@ def analyze_experience_full(
     jd_text: str,
     jd_skills: set[str] | None = None,
     jd_title: str = "",
+    jd_responsibilities: str = "",
 ) -> dict[str, Any]:
     """Run the full experience analysis pipeline.
 
@@ -784,13 +914,13 @@ def analyze_experience_full(
     # Extract JD requirement with domain-specific detection
     jd_min, jd_max, is_domain_specific = extract_required_experience_detailed(jd_text)
 
-    # Calculate relevant experience
+    # Calculate relevant experience (legacy)
     if jd_skills is None:
         jd_skills = set()
     relevant_months = calculate_relevant_experience_months(periods, jd_text, jd_skills, jd_title)
     relevant_years = relevant_months / 12.0 if relevant_months > 0 else None
 
-    # Score
+    # Score (legacy)
     score_info = score_experience_full(
         jd_min,
         jd_max,
@@ -801,6 +931,16 @@ def analyze_experience_full(
         is_domain_specific=is_domain_specific,
     )
 
+    # New experience ranking
+    exp_ranking = compute_experience_ranking(
+        periods,
+        jd_title,
+        jd_skills,
+        jd_responsibilities,
+        jd_min,
+        jd_max,
+    )
+
     # Separate matched and ignored periods
     matched_periods = [p for p in periods if True]  # all periods are matched for now
 
@@ -808,6 +948,16 @@ def analyze_experience_full(
     score_info["ignored_periods"] = []
     score_info["explicit_years"] = explicit_years
     score_info["date_based_years"] = date_based_years
+
+    # Add new experience ranking fields
+    score_info["experience_score"] = exp_ranking.get("experience_score")
+    score_info["total_experience_fit"] = exp_ranking.get("total_experience_fit")
+    score_info["relevant_experience_fit"] = exp_ranking.get("relevant_experience_fit")
+    score_info["recency_score"] = exp_ranking.get("recency_score")
+    score_info["seniority_fit"] = exp_ranking.get("seniority_fit")
+    score_info["total_years_new"] = exp_ranking.get("total_years")
+    score_info["relevant_years_new"] = exp_ranking.get("relevant_years")
+    score_info["experience_ranking_periods"] = exp_ranking.get("periods", [])
 
     return score_info
 
@@ -880,6 +1030,331 @@ def _is_domain_specific_match(text: str, match_end: int) -> bool:
     if _DOMAIN_PATTERN.search(after_cleaned):
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# 7. Public employment type detection
+# ---------------------------------------------------------------------------
+
+
+def detect_employment_type(title: str, section_text: str) -> str:
+    return _determine_employment_type(title, "", section_text)
+
+
+# ---------------------------------------------------------------------------
+# 8. Recency weight for relevance calculation
+# ---------------------------------------------------------------------------
+
+
+def _get_recency_weight_for_relevance(end_year: int, end_month: int, is_current: bool) -> float:
+    if is_current:
+        return 1.0
+    today = date.today()
+    months_ago = (today.year - end_year) * 12 + (today.month - end_month)
+    years_ago = months_ago / 12.0
+    if years_ago <= 2:
+        return 0.85
+    elif years_ago <= 5:
+        return 0.65
+    else:
+        return 0.45
+
+
+# ---------------------------------------------------------------------------
+# 9. Period relevance scoring
+# ---------------------------------------------------------------------------
+
+
+def _calculate_period_relevance(
+    period: dict[str, Any],
+    jd_title: str,
+    jd_required_skills: set[str],
+    jd_responsibilities: str,
+) -> float:
+    title_sim = semantic_similarity(period.get("title", ""), jd_title)
+    role_title_score = min(1.0, title_sim * 1.5)
+
+    period_family = _get_role_family(period.get("title", ""))
+    jd_role_family = _get_role_family(jd_title)
+    family_bonus = 0.0
+    if jd_role_family and period_family:
+        if jd_role_family == period_family:
+            family_bonus = 0.3
+        elif (jd_role_family, period_family) in _RELATED_FAMILIES or (
+            period_family,
+            jd_role_family,
+        ) in _RELATED_FAMILIES:
+            family_bonus = 0.15
+    role_title_score = min(1.0, role_title_score + family_bonus)
+
+    description = period.get("description", "")
+    context_lower = (description + " " + period.get("title", "")).lower()
+    if jd_required_skills:
+        matched = sum(1 for s in jd_required_skills if s.lower() in context_lower)
+        skill_score = min(1.0, (matched / len(jd_required_skills)) * 1.5)
+    else:
+        skill_score = 0.3
+
+    if description.strip() and jd_responsibilities.strip():
+        resp_sim = semantic_similarity(description, jd_responsibilities)
+        responsibility_score = min(1.0, resp_sim * 1.5)
+    else:
+        responsibility_score = 0.3
+
+    period_relevance = role_title_score * 0.35 + skill_score * 0.40 + responsibility_score * 0.25
+    return min(1.0, period_relevance)
+
+
+# ---------------------------------------------------------------------------
+# 10. Total Experience Fit scoring
+# ---------------------------------------------------------------------------
+
+
+def calculate_total_experience_fit(
+    periods: list[dict[str, Any]],
+    jd_required_years: float | None,
+    jd_max: float | None = None,
+) -> tuple[float, float]:
+    if not periods:
+        return (0.0, 0.0) if jd_required_years else (50.0, 0.0)
+
+    total_weighted_months = calculate_total_experience_months(periods)
+    total_years = total_weighted_months / 12.0
+
+    if jd_required_years is None:
+        return (70.0, total_years)
+
+    if jd_max is not None and total_years >= jd_required_years and total_years <= jd_max:
+        return (100.0, total_years)
+
+    if jd_max is not None and total_years > jd_max:
+        excess = total_years - jd_max
+        score = max(75.0, 100.0 - excess * 5)
+    elif total_years >= jd_required_years:
+        extra = total_years - jd_required_years
+        score = max(75.0, 100.0 - extra * 3)
+    else:
+        deficit = jd_required_years - total_years
+        score = max(10.0, 100.0 - deficit * 18)
+
+    return (score, total_years)
+
+
+# ---------------------------------------------------------------------------
+# 11. Relevant Experience Fit scoring
+# ---------------------------------------------------------------------------
+
+
+def calculate_relevant_experience_fit(
+    periods: list[dict[str, Any]],
+    jd_title: str,
+    jd_required_skills: set[str],
+    jd_responsibilities: str,
+    jd_required_years: float | None,
+) -> dict[str, Any]:
+    if not periods:
+        return {
+            "relevant_experience_fit": 0.0 if jd_required_years else 50.0,
+            "relevant_years": 0.0,
+            "period_details": [],
+        }
+
+    relevant_months = 0.0
+    period_details: list[dict[str, Any]] = []
+
+    for p in periods:
+        is_current = p.get("is_current", False)
+        recency_weight = _get_recency_weight_for_relevance(
+            p.get("end_year", date.today().year),
+            p.get("end_month", date.today().month),
+            is_current,
+        )
+        period_relevance = _calculate_period_relevance(
+            p, jd_title, jd_required_skills, jd_responsibilities
+        )
+        emp_weight = EMPLOYMENT_WEIGHTS.get(p.get("employment_type", "full_time"), 1.0)
+        counted = p.get("months", 0) * emp_weight * period_relevance * recency_weight
+        relevant_months += counted
+
+        period_details.append(
+            {
+                "title": p.get("title", ""),
+                "company": p.get("company", ""),
+                "start_date": p.get("start_date", ""),
+                "end_date": p.get("end_date", ""),
+                "months": p.get("months", 0),
+                "employment_type": p.get("employment_type", "full_time"),
+                "relevance_score": round(period_relevance, 4),
+                "recency_weight": round(recency_weight, 4),
+                "counted_relevant_months": round(counted, 2),
+            }
+        )
+
+    relevant_years = relevant_months / 12.0
+
+    if jd_required_years is None:
+        score = 70.0
+    elif relevant_years >= jd_required_years:
+        extra = relevant_years - jd_required_years
+        score = max(80.0, 100.0 - extra * 2)
+    else:
+        deficit = jd_required_years - relevant_years
+        score = max(10.0, 100.0 - deficit * 22)
+
+    return {
+        "relevant_experience_fit": round(score, 1),
+        "relevant_years": round(relevant_years, 2),
+        "period_details": period_details,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 12. Recency Score
+# ---------------------------------------------------------------------------
+
+
+def calculate_recency_score(
+    periods: list[dict[str, Any]],
+    jd_title: str,
+    jd_required_skills: set[str],
+) -> float:
+    if not periods:
+        return 30.0
+
+    today = date.today()
+    jd_role_family = _get_role_family(jd_title)
+    best_score = 30.0
+
+    for p in periods:
+        is_current = p.get("is_current", False)
+        period_family = _get_role_family(p.get("title", ""))
+        context_lower = (p.get("description", "") + " " + p.get("title", "")).lower()
+
+        is_relevant = False
+        if jd_role_family and period_family:
+            if jd_role_family == period_family:
+                is_relevant = True
+            elif (jd_role_family, period_family) in _RELATED_FAMILIES or (
+                period_family,
+                jd_role_family,
+            ) in _RELATED_FAMILIES:
+                is_relevant = True
+
+        if not is_relevant and jd_required_skills:
+            matched = sum(1 for s in jd_required_skills if s.lower() in context_lower)
+            if matched >= 2:
+                is_relevant = True
+
+        if not is_relevant:
+            continue
+
+        end_year = p.get("end_year", today.year)
+        end_month = p.get("end_month", today.month)
+
+        if is_current:
+            score = 95.0
+        else:
+            years_ago = (today.year - end_year) + (today.month - end_month) / 12.0
+            if years_ago <= 2:
+                score = 85.0
+            elif years_ago <= 5:
+                score = 68.0
+            else:
+                score = 50.0
+
+        if score > best_score:
+            best_score = score
+
+    return best_score
+
+
+# ---------------------------------------------------------------------------
+# 13. Seniority Fit
+# ---------------------------------------------------------------------------
+
+
+def calculate_seniority_fit(
+    periods: list[dict[str, Any]],
+    jd_title: str,
+) -> float:
+    if not jd_title or not periods:
+        return 70.0
+
+    jd_seniority = detect_seniority(jd_title)
+    candidate_seniority = 3
+
+    for p in periods:
+        if p.get("is_current", False):
+            candidate_seniority = detect_seniority(p.get("title", ""))
+            break
+
+    if candidate_seniority == 3 and periods:
+        candidate_seniority = detect_seniority(periods[0].get("title", ""))
+
+    diff = candidate_seniority - jd_seniority
+
+    if diff == 0:
+        return 100.0
+    elif diff < 0:
+        abs_diff = abs(diff)
+        if abs_diff == 1:
+            return 85.0
+        elif abs_diff == 2:
+            return 65.0
+        else:
+            return 45.0
+    else:
+        if diff <= 2:
+            return 95.0
+        elif diff <= 4:
+            return 90.0
+        else:
+            return 85.0
+
+
+# ---------------------------------------------------------------------------
+# 14. Final Experience Score computation
+# ---------------------------------------------------------------------------
+
+
+def compute_experience_ranking(
+    periods: list[dict[str, Any]],
+    jd_title: str,
+    jd_required_skills: set[str],
+    jd_responsibilities: str,
+    jd_required_years: float | None,
+    jd_max: float | None = None,
+) -> dict[str, Any]:
+    total_fit_score, total_years = calculate_total_experience_fit(
+        periods, jd_required_years, jd_max
+    )
+    relevant_result = calculate_relevant_experience_fit(
+        periods, jd_title, jd_required_skills, jd_responsibilities, jd_required_years
+    )
+    relevant_fit_score = relevant_result.get("relevant_experience_fit", 0)
+    relevant_years = relevant_result.get("relevant_years", 0.0)
+    period_details = relevant_result.get("period_details", [])
+
+    recency = calculate_recency_score(periods, jd_title, jd_required_skills)
+    seniority = calculate_seniority_fit(periods, jd_title)
+
+    experience_score = total_fit_score * 0.50 + relevant_fit_score * 0.50
+
+    warnings: list[str] = []
+    if len(period_details) != len(periods):
+        warnings.append("Some periods excluded from relevance calculation")
+
+    return {
+        "experience_score": round(experience_score, 1),
+        "total_years": round(total_years, 2),
+        "relevant_years": round(relevant_years, 2),
+        "total_experience_fit": round(total_fit_score, 1),
+        "relevant_experience_fit": round(relevant_fit_score, 1),
+        "recency_score": round(recency, 1),
+        "seniority_fit": round(seniority, 1),
+        "periods": period_details,
+        "warnings": warnings,
+    }
 
 
 # ---------------------------------------------------------------------------

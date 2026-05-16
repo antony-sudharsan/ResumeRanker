@@ -101,7 +101,8 @@ def test_ranking_has_justification():
     assert results[0].justification
     assert "SKILLS" in results[0].justification
     assert "EXPERIENCE" in results[0].justification
-    assert "TITLE" in results[0].justification
+    assert "DESIGNATION" in results[0].justification
+    assert "ROLES" in results[0].justification
 
 
 def test_single_candidate():
@@ -289,3 +290,161 @@ def test_bullet_interested_ml_not_matched():
     results = rank_candidates(jd_text, candidates)
     sa = results[0].skill_analysis
     assert "machine learning" not in sa.matched_skills
+
+
+# ==============================================================================
+# Hybrid ranking system integration tests
+# ==============================================================================
+
+
+def test_hybrid_ranking_has_match_quality():
+    """rank_candidates returns match_quality on each result."""
+    jd = "React Developer\nSkills: React, Redux, TypeScript"
+    resume = "Frontend Developer using React, Redux, TypeScript"
+    results = rank_candidates(jd, [("Test", resume)])
+    assert results[0].match_quality in (
+        "Excellent match",
+        "Strong match",
+        "Moderate match",
+        "Weak match",
+        "Poor match",
+        "No match",
+    )
+
+
+def test_hybrid_ranking_has_roles_analysis():
+    """rank_candidates returns roles_analysis on each result."""
+    jd = "React Developer\nSkills: React, Redux, TypeScript"
+    resume = "Frontend Developer using React, Redux, TypeScript"
+    results = rank_candidates(jd, [("Test", resume)])
+    ra = results[0].roles_analysis
+    assert ra.score >= 0
+    assert ra.score <= 100
+
+
+def test_hybrid_ranking_score_bounds():
+    """All individual component scores are within [0, 100]."""
+    jd = "React Developer\nSkills: React, Redux, TypeScript"
+    resume = "Frontend Developer using React, Redux, TypeScript"
+    results = rank_candidates(jd, [("Test", resume)])
+    r = results[0]
+    assert 0 <= r.overall_score <= 100
+    assert 0 <= r.skill_analysis.match_percentage <= 100
+    assert 0 <= r.experience_analysis.score <= 100
+    assert 0 <= r.title_analysis.score <= 100
+    assert 0 <= r.roles_analysis.score <= 100
+
+
+# ---------------------------------------------------------------------------
+# Spec test cases
+# ---------------------------------------------------------------------------
+
+
+def test_spec_case_1_react_dev():
+    """JD: React Developer with responsibilities, Resume: Frontend Developer using React
+    Strong skill + role + designation match → high score."""
+    jd = """Job Title: React Developer
+Required Skills:
+React, Redux, TypeScript
+Roles and Responsibilities:
+- Build and maintain React applications
+- Implement state management with Redux
+- Write type-safe code with TypeScript
+"""
+    resume = """Frontend Developer
+Skills: React, Redux, TypeScript, JavaScript
+Professional Experience:
+React Developer | Tech Corp | Jan 2022 - Present
+- Built React applications with Redux and TypeScript
+- Developed reusable UI components
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score >= 70, f"Expected high score, got {score}"
+
+
+def test_spec_case_2_senior_backend_vs_junior_frontend():
+    """JD: Senior Backend Engineer, Resume: Junior Frontend Developer
+    Expected: Low title + low experience score"""
+    jd = """Job Title: Senior Backend Engineer
+Required Skills:
+Java, Spring, Microservices
+"""
+    resume = """Junior Frontend Developer
+Skills: HTML, CSS, JavaScript
+Professional Experience:
+Junior Dev | Some Corp | Jan 2023 - Present
+- Built web pages and UI components
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score < 55, f"Expected low score, got {score}"
+
+
+def test_spec_case_3_data_analyst_vs_bi_dev():
+    """JD: Data Analyst, Resume: BI Developer using Tableau, SQL, Power BI
+    Expected: Good skill overlap, related role family → moderate-high score."""
+    jd = """Job Title: Data Analyst
+Required Skills:
+Tableau, SQL, Power BI, Excel
+Roles and Responsibilities:
+- Analyze data and build dashboards
+- Create reports and visualizations
+"""
+    resume = """BI Developer
+Skills: Tableau, SQL, Power BI
+Professional Experience:
+BI Developer | Analytics Corp | Mar 2021 - Present
+- Developed BI dashboards using Tableau and Power BI
+- Wrote complex SQL queries for data analysis
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score >= 50, f"Expected moderate score, got {score}"
+
+
+def test_spec_case_4_learning_aws_low_score():
+    """JD: AWS DevOps Engineer, Resume: 'Currently learning AWS'
+    Expected: Low score — weak context should not inflate score."""
+    jd = """Job Title: AWS DevOps Engineer
+Required Skills:
+AWS, Docker, Kubernetes, Terraform
+"""
+    resume = """Junior Engineer
+Currently learning AWS. Have basic Linux knowledge.
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score < 45, f"Expected low score, got {score}"
+
+
+def test_spec_case_5_java_dev_vs_python_analyst():
+    """JD: Java Developer, Resume: Python Data Analyst
+    Expected: Low overall score — different stack and role."""
+    jd = """Job Title: Java Developer
+Required Skills:
+Java, Spring Boot, Hibernate
+"""
+    resume = """Python Data Analyst
+Skills: Python, Pandas, NumPy, SQL
+Professional Experience:
+Data Analyst | Data Corp | Jan 2022 - Present
+- Analyzed data using Python and Pandas
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score < 50, f"Expected low score, got {score}"
+
+
+def test_spec_case_5_java_dev_vs_python_analyst():
+    """JD: Java Developer, Resume: Python Data Analyst
+    Expected: Low overall score"""
+    jd = "Java Developer\nSkills: Java, Spring Boot, Hibernate"
+    resume = """Python Data Analyst
+Skills: Python, Pandas, NumPy, SQL
+Experience:
+- Analyzed data using Python
+"""
+    results = rank_candidates(jd, [("Test", resume)])
+    score = results[0].overall_score
+    assert score < 50, f"Expected low score, got {score}"

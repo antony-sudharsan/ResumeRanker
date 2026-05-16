@@ -1,12 +1,14 @@
-"""Core ranking engine — LinkedIn-style scoring with multiple ranking signals."""
+"""Hybrid resume ranking engine — skills, experience, roles, and designation signals."""
+
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from resume_ranker.experience import (
     analyze_experience_full,
     extract_required_experience,
-    extract_required_experience_detailed,
     extract_years_of_experience,
 )
 from resume_ranker.skills import (
@@ -17,6 +19,11 @@ from resume_ranker.skills import (
     flatten_skills,
     infer_skills,
 )
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -40,8 +47,6 @@ class ExperienceAnalysis:
     required_max: float | None = None
     score: float = 0.0
     summary: str = ""
-
-    # New fields for enhanced experience analysis
     candidate_total_years: float | None = None
     candidate_relevant_years: float | None = None
     total_experience_score: float = 0.0
@@ -55,22 +60,27 @@ class ExperienceAnalysis:
 
 
 @dataclass
-class SemanticAnalysis:
-    """Analysis of semantic/meaning-based matching."""
-
-    score: float = 0.0
-    summary: str = ""
-
-
-@dataclass
 class TitleAnalysis:
-    """Analysis of job title relevance."""
+    """Analysis of designation / job title relevance."""
 
     jd_title: str = ""
     candidate_titles: list[dict] = field(default_factory=list)
     score: float = 0.0
     summary: str = ""
     debug: dict = field(default_factory=dict)
+
+
+@dataclass
+class RolesAnalysis:
+    """Analysis of roles & responsibilities matching."""
+
+    score: float = 0.0
+    summary: str = ""
+    tfidf_score: float = 0.0
+    semantic_score: float = 0.0
+    action_verb_score: float = 0.0
+    section_confidence: float = 0.0
+    best_role_matches: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -82,15 +92,30 @@ class CandidateResult:
     rank: int = 0
     skill_analysis: SkillAnalysis = field(default_factory=SkillAnalysis)
     experience_analysis: ExperienceAnalysis = field(default_factory=ExperienceAnalysis)
-    semantic_analysis: SemanticAnalysis = field(default_factory=SemanticAnalysis)
     title_analysis: TitleAnalysis = field(default_factory=TitleAnalysis)
+    roles_analysis: RolesAnalysis = field(default_factory=RolesAnalysis)
     justification: str = ""
+    match_quality: str = ""
 
-    # LinkedIn-style weight configuration
+    # Weight configuration
     SKILL_WEIGHT: float = 0.40
-    SEMANTIC_WEIGHT: float = 0.20
-    TITLE_WEIGHT: float = 0.15
     EXPERIENCE_WEIGHT: float = 0.25
+    ROLES_WEIGHT: float = 0.25
+    DESIGNATION_WEIGHT: float = 0.10
+
+
+def _match_quality_label(score: float) -> str:
+    if score >= 90:
+        return "Excellent match"
+    elif score >= 80:
+        return "Strong match"
+    elif score >= 70:
+        return "Moderate match"
+    elif score >= 50:
+        return "Weak match"
+    elif score >= 1:
+        return "Poor match"
+    return "No match"
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +247,7 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
             missing_skills=[],
             extra_skills=sorted(resume_skills),
             inferred_skills=sorted(inferred),
-            match_percentage=100.0 if resume_skills else 0.0,
+            match_percentage=50.0,
             semantic_match_details=sem_details,
         )
 
@@ -247,18 +272,17 @@ def _analyze_skills(jd_text: str, resume_text: str) -> SkillAnalysis:
 
 def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     """Compare experience requirements against candidate's experience."""
-    # Use the old-school explicit years as the baseline candidate_years
     candidate_years = extract_years_of_experience(resume_text)
     req_min, req_max = extract_required_experience(jd_text)
 
-    # Gather JD skills and title for relevance calculation
+    jd_responsibilities = ""
+    jd_skills: set[str] = set()
     try:
-        from resume_ranker.skills import extract_skills, flatten_skills
-
         required_jd, _preferred_jd, _resp_jd = _split_jd_sections(jd_text)
         jd_skills = flatten_skills(extract_skills(required_jd))
+        jd_responsibilities = _resp_jd
     except Exception:
-        jd_skills = set()
+        pass
 
     jd_title = ""
     try:
@@ -270,10 +294,10 @@ def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     except Exception:
         pass
 
-    # Run the full experience analysis pipeline
-    exp_debug = analyze_experience_full(resume_text, jd_text, jd_skills, jd_title)
+    exp_debug = analyze_experience_full(
+        resume_text, jd_text, jd_skills, jd_title, jd_responsibilities
+    )
 
-    # Map results to ExperienceAnalysis fields
     total_years = exp_debug.get("candidate_total_years")
     relevant_years = exp_debug.get("candidate_relevant_years")
     final_score = exp_debug.get("final_experience_score", 0.0)
@@ -285,90 +309,160 @@ def _analyze_experience(jd_text: str, resume_text: str) -> ExperienceAnalysis:
     ignored_periods = exp_debug.get("ignored_periods", [])
     warnings = exp_debug.get("warnings", [])
 
-    # Build a human-readable summary
+    experience_score = exp_debug.get("experience_score")
+    total_experience_fit: float | None = exp_debug.get("total_experience_fit")
+    relevant_experience_fit: float | None = exp_debug.get("relevant_experience_fit")
+    recency_score: float | None = exp_debug.get("recency_score")
+    seniority_fit: float | None = exp_debug.get("seniority_fit")
+    total_years_new = exp_debug.get("total_years_new")
+    relevant_years_new = exp_debug.get("relevant_years_new")
+    experience_ranking_periods = exp_debug.get("experience_ranking_periods", [])
+
+    use_new_scoring = experience_score is not None
+    effective_score = experience_score if use_new_scoring else final_score
+
     jd_req_str = (
         f"{req_min:.0f}" + (f"-{req_max:.0f}" if req_max else "+") if req_min is not None else "N/A"
     )
 
     summary_parts: list[str] = []
-    if total_years is not None:
-        summary_parts.append(f"Total: {total_years:.1f}y")
-    if relevant_years is not None:
-        summary_parts.append(f"Relevant: {relevant_years:.1f}y")
+    if use_new_scoring:
+        summary_parts.append(f"Score: {effective_score:.1f}")
+        summary_parts.append(
+            f"Total: {total_years_new:.1f}y"
+            if total_years_new is not None
+            else f"Total: {total_years:.1f}y"
+            if total_years is not None
+            else ""
+        )
+        summary_parts.append(
+            f"Relevant: {relevant_years_new:.1f}y"
+            if relevant_years_new is not None
+            else f"Relevant: {relevant_years:.1f}y"
+            if relevant_years is not None
+            else ""
+        )
+    else:
+        if total_years is not None:
+            summary_parts.append(f"Total: {total_years:.1f}y")
+        if relevant_years is not None:
+            summary_parts.append(f"Relevant: {relevant_years:.1f}y")
     if req_min is not None:
         summary_parts.append(f"Required: {jd_req_str}y")
 
-    summary = " | ".join(summary_parts) if summary_parts else "No experience data"
+    summary = " | ".join(p for p in summary_parts if p) if summary_parts else "No experience data"
+
+    debug_info = dict(exp_debug)
+    if use_new_scoring:
+        debug_info.update(
+            {
+                "experience_score": experience_score,
+                "total_experience_fit": total_experience_fit,
+                "relevant_experience_fit": relevant_experience_fit,
+                "recency_score_component": recency_score,
+                "seniority_fit_component": seniority_fit,
+                "experience_ranking_periods": experience_ranking_periods,
+            }
+        )
 
     return ExperienceAnalysis(
         candidate_years=candidate_years,
         required_min=req_min,
         required_max=req_max,
-        score=final_score,
+        score=effective_score,
         summary=summary,
-        candidate_total_years=total_years,
-        candidate_relevant_years=relevant_years,
-        total_experience_score=total_exp_score,
-        relevant_experience_score=relevant_exp_score,
+        candidate_total_years=total_years_new if use_new_scoring else total_years,
+        candidate_relevant_years=relevant_years_new if use_new_scoring else relevant_years,
+        total_experience_score=(total_experience_fit if use_new_scoring else total_exp_score)
+        or 0.0,
+        relevant_experience_score=(
+            relevant_experience_fit if use_new_scoring else relevant_exp_score
+        )
+        or 0.0,
         confidence_score=conf_score,
         source=source,
         matched_periods=matched_periods,
         ignored_periods=ignored_periods,
         warnings=warnings,
-        debug=exp_debug,
+        debug=debug_info,
     )
 
 
-def _analyze_semantic(jd_text: str, resume_text: str) -> SemanticAnalysis:
-    """Semantic AI matching using sentence-transformer embeddings.
+def _find_responsibility_section(jd_text: str) -> str:
+    """Find the Roles & Responsibilities section in JD text.
 
-    Improvements over basic chunked similarity:
-      1. Requirements-focused blending — weights the "Requirements" section 3:2 over full JD
-      2. Optional cross-encoder re-ranking (70/30 blend with bi-encoder if available)
-      3. Calibrated scaling — maps 0.2-0.8 cosine similarity to 0-100 score
-    """
-    from resume_ranker.semantic import cross_encoder_score, semantic_similarity_chunked
+    Handles headers with colons (e.g. 'Roles and Responsibilities:')
+    that _split_jd_sections cannot parse."""
+    lines = jd_text.split("\n")
+    patterns = [
+        re.compile(
+            r"(?:roles?\s*(?:&|and)\s*responsibilities|responsibilities|duties|what.you.?ll\s*do)",
+            re.IGNORECASE,
+        ),
+    ]
+    start = None
+    for i, line in enumerate(lines):
+        stripped = line.strip().rstrip(":")
+        for pat in patterns:
+            if pat.search(stripped):
+                start = i + 1
+                break
+        if start is not None:
+            break
+    if start is None:
+        return ""
 
-    required_jd, _preferred_jd, _resp_jd = _split_jd_sections(jd_text)
+    end = len(lines)
+    for i in range(start, len(lines)):
+        stripped = lines[i].strip().rstrip(":")
+        if not stripped:
+            continue
+        if re.match(r"^[A-Z][A-Za-z &/,\-–]+$", stripped):
+            end = i
+            break
 
-    # Full JD semantic match (baseline)
-    full_sim = semantic_similarity_chunked(jd_text, resume_text)
+    return "\n".join(lines[start:end])
 
-    # Requirements-focused match (penalizes candidates who match boilerplate but not reqs)
-    if required_jd.strip():
-        req_sim = semantic_similarity_chunked(required_jd, resume_text)
-    else:
-        req_sim = full_sim
 
-    # Blend: 60% requirements-focused, 40% full JD
-    # This ensures requirement alignment matters more than generic JD overlap
-    sim = 0.6 * req_sim + 0.4 * full_sim
+def _analyze_roles(jd_text: str, resume_text: str) -> RolesAnalysis:
+    """Analyze roles & responsibilities match using hybrid scoring."""
+    from resume_ranker.roles import calculate_roles_score
 
-    # Cross-encoder re-ranking (optional — blends in if model is available)
-    ce = cross_encoder_score(jd_text, resume_text)
-    if ce is not None:
-        sim = 0.7 * ce + 0.3 * sim
+    resp_section = _find_responsibility_section(jd_text)
+    if not resp_section.strip():
+        resp_section = jd_text
 
-    score = min(100.0, sim * 150.0)
+    result = calculate_roles_score(resp_section, resume_text)
+    score = result["roles_score"]
 
     if score >= 70:
         level = "Strong"
     elif score >= 40:
         level = "Moderate"
     elif score >= 20:
-        level = "Partial"
+        level = "Weak"
     else:
-        level = "Low"
+        level = "Minimal"
 
-    return SemanticAnalysis(
+    return RolesAnalysis(
         score=score,
-        summary=f"{level} semantic alignment ({score:.1f}%). AI-based meaning match.",
+        summary=f"{level} roles & responsibilities alignment ({score:.1f}%).",
+        tfidf_score=result["tfidf_score"],
+        semantic_score=result["semantic_score"],
+        action_verb_score=result["action_verb_score"],
+        section_confidence=result["section_confidence"],
+        best_role_matches=result["best_role_matches"],
     )
 
 
-def _analyze_title(jd_text: str, resume_text: str) -> TitleAnalysis:
-    """Analyze job title relevance."""
-    from resume_ranker.signals import analyze_title_relevance
+def _analyze_designation(jd_text: str, resume_text: str) -> TitleAnalysis:
+    """Analyze designation / job title relevance.
+
+    Formula: semantic_similarity × role_family_factor × seniority_factor × recency_factor
+    """
+    from resume_ranker.signals import (
+        analyze_title_relevance,
+    )
 
     result = analyze_title_relevance(jd_text, resume_text)
     return TitleAnalysis(
@@ -389,7 +483,9 @@ def _generate_justification(result: CandidateResult) -> str:
     """Generate a human-readable justification for the candidate's ranking."""
     parts: list[str] = []
 
-    parts.append(f"Overall Score: {result.overall_score:.1f}/100 (Rank #{result.rank})")
+    parts.append(
+        f"Overall Score: {result.overall_score:.1f}/100 | {result.match_quality} | Rank #{result.rank}"
+    )
     parts.append("")
 
     # Skills
@@ -407,30 +503,35 @@ def _generate_justification(result: CandidateResult) -> str:
         parts.append(f"  Inferred: {', '.join(sa.inferred_skills)}")
     parts.append("")
 
-    # Semantic
-    sem = result.semantic_analysis
-    parts.append(
-        f"SEMANTIC AI MATCH (score: {sem.score:.0f}/100, weight: "
-        f"{CandidateResult.SEMANTIC_WEIGHT:.0%})"
-    )
-    parts.append(f"  {sem.summary}")
-    parts.append("")
-
-    # Title
+    # Designation
     ta = result.title_analysis
     parts.append(
-        f"TITLE RELEVANCE (score: {ta.score:.0f}/100, weight: {CandidateResult.TITLE_WEIGHT:.0%})"
+        f"DESIGNATION / TITLE (score: {ta.score:.0f}/100, weight: {CandidateResult.DESIGNATION_WEIGHT:.0%})"
     )
     parts.append(f"  {ta.summary}")
     if ta.debug:
         d = ta.debug
         parts.append(
-            f"  sim={d.get('semantic_similarity', '?'):} "
+            f"  semantic_sim={d.get('semantic_similarity', '?'):} "
             f"seniority={d.get('seniority_factor', '?'):} "
             f"family={d.get('role_family_factor', '?'):} "
             f"recency={d.get('recency_factor', '?'):} "
             f"→ {d.get('role_family_match', '?'):}"
         )
+    parts.append("")
+
+    # Roles & Responsibilities
+    ra = result.roles_analysis
+    parts.append(
+        f"ROLES & RESPONSIBILITIES (score: {ra.score:.0f}/100, weight: {CandidateResult.ROLES_WEIGHT:.0%})"
+    )
+    parts.append(f"  {ra.summary}")
+    if ra.best_role_matches:
+        parts.append(f"  Top matches: {len(ra.best_role_matches)} role responsibilities matched")
+    parts.append(
+        f"  TF-IDF: {ra.tfidf_score:.1f} | Semantic: {ra.semantic_score:.1f} | "
+        f"Action Verbs: {ra.action_verb_score:.1f} | Section: {ra.section_confidence:.1f}"
+    )
     parts.append("")
 
     # Experience
@@ -439,7 +540,15 @@ def _generate_justification(result: CandidateResult) -> str:
         f"EXPERIENCE (score: {ea.score:.0f}/100, weight: {CandidateResult.EXPERIENCE_WEIGHT:.0%})"
     )
     parts.append(f"  {ea.summary}")
-    if ea.source:
+    if ea.debug.get("experience_score") is not None:
+        d = ea.debug
+        parts.append(
+            f"  Total Fit: {d.get('total_experience_fit', '?'):} | "
+            f"Relevant Fit: {d.get('relevant_experience_fit', '?'):} | "
+            f"Recency: {d.get('recency_score_component', '?'):} | "
+            f"Seniority: {d.get('seniority_fit_component', '?'):}"
+        )
+    elif ea.source:
         source_labels = {
             "max_of_both": "explicit + dates (max)",
             "date_based_preferred": "date-based (preferred)",
@@ -467,35 +576,39 @@ def rank_candidates(
     jd_text: str,
     candidates: list[tuple[str, str]],
 ) -> list[CandidateResult]:
-    """Rank candidates against a job description using LinkedIn-style signals.
+    """Rank candidates against a job description using hybrid scoring signals.
 
     Scoring weights:
-        Skills Match:         40%  (keyword matching with skill inference)
-        Semantic AI Match:    20%  (meaning-based NLP matching)
-        Title Relevance:      15%  (job title alignment)
-        Experience:           25%  (years of experience)
+        Skills:                  40%  (keyword matching + semantic skill inference)
+        Experience:              25%  (total + relevant + recency + seniority)
+        Roles & Responsibilities: 25%  (TF-IDF + semantic + action verbs)
+        Designation / Title:      10%  (semantic sim × family × seniority × recency)
     """
     results: list[CandidateResult] = []
 
     for name, resume_text in candidates:
         skill_analysis = _analyze_skills(jd_text, resume_text)
         exp_analysis = _analyze_experience(jd_text, resume_text)
-        semantic_analysis = _analyze_semantic(jd_text, resume_text)
-        title_analysis = _analyze_title(jd_text, resume_text)
+        title_analysis = _analyze_designation(jd_text, resume_text)
+        roles_analysis = _analyze_roles(jd_text, resume_text)
+
         overall = (
             skill_analysis.match_percentage * CandidateResult.SKILL_WEIGHT
-            + semantic_analysis.score * CandidateResult.SEMANTIC_WEIGHT
-            + title_analysis.score * CandidateResult.TITLE_WEIGHT
             + exp_analysis.score * CandidateResult.EXPERIENCE_WEIGHT
+            + roles_analysis.score * CandidateResult.ROLES_WEIGHT
+            + title_analysis.score * CandidateResult.DESIGNATION_WEIGHT
         )
+
+        match_quality = _match_quality_label(overall)
 
         result = CandidateResult(
             candidate_name=name,
             overall_score=overall,
             skill_analysis=skill_analysis,
             experience_analysis=exp_analysis,
-            semantic_analysis=semantic_analysis,
             title_analysis=title_analysis,
+            roles_analysis=roles_analysis,
+            match_quality=match_quality,
         )
         results.append(result)
 

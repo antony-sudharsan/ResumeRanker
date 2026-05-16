@@ -62,7 +62,7 @@
                 <label for="resumes">Upload Resumes</label>
                 <div class="file-upload" id="dropZone">
                     <input type="file" id="resumes" name="resumes" multiple
-                           accept=".pdf,.docx,.txt" required>
+                           accept=".pdf,.docx,.txt">
                     <div class="upload-content">
                         <span class="upload-icon">&#128196;</span>
                         <p>Drag & drop resumes here or <strong>click to browse</strong></p>
@@ -79,13 +79,28 @@
     </div>
 
     <script>
+        const MAX_RESUMES = 5;
+        let selectedFiles = [];
+
         const fileInput = document.getElementById('resumes');
         const fileList = document.getElementById('fileList');
         const dropZone = document.getElementById('dropZone');
         const form = document.getElementById('rankForm');
         const submitBtn = document.getElementById('submitBtn');
 
-        fileInput.addEventListener('change', updateFileList);
+        fileInput.addEventListener('change', () => {
+            for (const file of fileInput.files) {
+                if (selectedFiles.length >= MAX_RESUMES) {
+                    alert(`Maximum ${MAX_RESUMES} resumes allowed.`);
+                    break;
+                }
+                if (!selectedFiles.find(f => f.name === file.name && f.size === file.size)) {
+                    selectedFiles.push(file);
+                }
+            }
+            renderFileList();
+            fileInput.value = '';
+        });
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -99,23 +114,61 @@
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('dragover');
-            fileInput.files = e.dataTransfer.files;
-            updateFileList();
+            for (const file of e.dataTransfer.files) {
+                if (selectedFiles.length >= MAX_RESUMES) {
+                    alert(`Maximum ${MAX_RESUMES} resumes allowed.`);
+                    break;
+                }
+                if (!selectedFiles.find(f => f.name === file.name && f.size === file.size)) {
+                    selectedFiles.push(file);
+                }
+            }
+            renderFileList();
         });
 
-        function updateFileList() {
+        function renderFileList() {
             fileList.innerHTML = '';
-            for (const file of fileInput.files) {
+            selectedFiles.forEach((file, i) => {
                 const div = document.createElement('div');
-                div.className = 'file-item';
-                div.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                div.className = 'file-item file-item-with-remove';
+                div.innerHTML = `<span>${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
+                    <button type="button" class="btn-remove" data-index="${i}">&times;</button>`;
+                div.querySelector('.btn-remove').addEventListener('click', () => {
+                    selectedFiles.splice(i, 1);
+                    renderFileList();
+                });
                 fileList.appendChild(div);
-            }
+            });
         }
 
-        form.addEventListener('submit', () => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (selectedFiles.length === 0) {
+                alert('Please select at least one resume.');
+                return;
+            }
             submitBtn.disabled = true;
             submitBtn.textContent = 'Ranking candidates...';
+
+            const fd = new FormData();
+            fd.append('designation', document.getElementById('designation').value);
+            fd.append('skills', document.getElementById('skills').value);
+            fd.append('min_experience', document.getElementById('min_experience').value);
+            fd.append('max_experience', document.getElementById('max_experience').value);
+            fd.append('roles_responsibilities', document.getElementById('roles_responsibilities').value);
+            selectedFiles.forEach(f => fd.append('resumes', f));
+
+            try {
+                const resp = await fetch('/rank', { method: 'POST', body: fd });
+                const html = await resp.text();
+                document.open();
+                document.write(html);
+                document.close();
+            } catch (err) {
+                alert('Error ranking candidates. Please try again.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Rank Candidates';
+            }
         });
     </script>
 </body>
