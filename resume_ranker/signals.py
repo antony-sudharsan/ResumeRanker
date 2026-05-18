@@ -148,6 +148,20 @@ _ROLE_FAMILY_KEYWORDS: list[tuple[str, set[str]]] = [
         },
     ),
     (
+        "ui_ux",
+        {
+            "ui/ux designer",
+            "ui designer",
+            "ux designer",
+            "ux researcher",
+            "product designer",
+            "interaction designer",
+            "visual designer",
+            "ui developer",
+            "ux developer",
+        },
+    ),
+    (
         "frontend",
         {
             "frontend engineer",
@@ -231,19 +245,31 @@ _ROLE_FAMILY_KEYWORDS: list[tuple[str, set[str]]] = [
 # unrelated families get a penalty factor of 0.60
 # related families get 0.85, same family gets 1.0
 _ROLE_FAMILY_RELATED: dict[str, set[str]] = {
-    "frontend": {"fullstack", "mobile", "generic_engineering"},
-    "backend": {"fullstack", "cloud", "devops", "generic_engineering"},
+    "frontend": {"fullstack", "mobile", "ui_ux", "generic_engineering"},
+    "backend": {"fullstack", "cloud", "generic_engineering"},
     "fullstack": {"frontend", "backend", "generic_engineering"},
     "data": {"analytics_bi", "ai_ml", "generic_engineering"},
-    "devops": {"cloud", "backend", "generic_engineering"},
+    "devops": {"cloud", "generic_engineering"},
     "qa": {"generic_engineering"},
     "mobile": {"frontend", "generic_engineering"},
     "ai_ml": {"data", "analytics_bi", "generic_engineering"},
     "analytics_bi": {"data", "ai_ml", "generic_engineering"},
     "security": {"cloud", "devops", "generic_engineering"},
     "product": {"generic_engineering"},
-    "cloud": {"devops", "backend", "generic_engineering"},
+    "cloud": {"devops", "generic_engineering"},
+    "ui_ux": {"frontend", "generic_engineering"},
     "generic_engineering": set(),
+    "unknown": set(),
+}
+
+# Role family loosely-related matrix (between related and unrelated).
+# Families in this set get a factor of 0.72.
+_ROLE_FAMILY_LOOSELY_RELATED: dict[str, set[str]] = {
+    "backend": {"devops"},
+    "devops": {"backend"},
+    "frontend": {"qa"},
+    "qa": {"frontend"},
+    "unknown": set(),
 }
 
 # JD title label prefixes
@@ -486,6 +512,29 @@ def extract_jd_title(jd_text: str) -> str:
     if candidates:
         candidates.sort(key=lambda x: x[0])  # prefer shorter
         return candidates[0][1]
+
+    # Phase 4: final fallback — short line that looks like a job title
+    # Catches non-tech titles (Plumber, Nurse, etc.) that lack role keywords.
+    # Allows single-word titles but caps at 5 words to avoid sentences.
+    # Also skips lines that are entirely lowercase (likely not a title).
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("*", "-", "•", "–")):
+            continue
+        words = stripped.split()
+        if not (1 <= len(words) <= 5):
+            continue
+        lower = stripped.lower()
+        if any(indicator in lower for indicator in company_indicators):
+            continue
+        # Skip entirely lowercase lines (likely descriptions, not titles)
+        if stripped == lower:
+            continue
+        title = _clean_jd_title(stripped)
+        if title and 1 <= len(title.split()) <= 5:
+            return title
 
     return ""
 
@@ -737,29 +786,71 @@ def detect_role_family(title: str) -> str:
 
     Returns one of: frontend, backend, fullstack, data, devops, qa,
     mobile, ai_ml, analytics_bi, security, product, cloud,
-    generic_engineering.
+    ui_ux, generic_engineering, unknown.
     """
     title_lower = title.lower()
     for family, keywords in _ROLE_FAMILY_KEYWORDS:
         for kw in keywords:
             if kw in title_lower:
                 return family
-    return "generic_engineering"
+    return "unknown"
+
+
+def _get_family_confidence(title: str) -> float:
+    """Compute confidence that a title correctly maps to its detected role family.
+
+    Returns 0.0-1.0 based on strength of tech signals in the title.
+    Titles like "Plumber" with no tech keywords → 0.0 (unknown).
+    Titles like "Software Engineer" with clear tech indicators → 0.85+.
+    """
+    title_lower = title.lower()
+    detected_family = detect_role_family(title)
+
+    if detected_family == "unknown":
+        return 0.0
+
+    # Check for concrete keyword match in a specific (non-generic) tech family
+    for family, keywords in _ROLE_FAMILY_KEYWORDS:
+        if family == "generic_engineering":
+            continue
+        for kw in keywords:
+            if kw in title_lower:
+                return 0.95
+
+    # generic_engineering: assess specificity of tech signals
+    strong_signals = ["software", "application", "system", "programmer", "full stack", "full-stack"]
+    weak_signals = ["engineer", "developer"]
+
+    has_strong = any(s in title_lower for s in strong_signals)
+    has_weak = any(s in title_lower for s in weak_signals)
+
+    if has_strong:
+        return 0.92
+    if has_weak:
+        return 0.70
+    return 0.55
 
 
 def _get_role_family_factor(jd_family: str, candidate_family: str) -> float:
     """Compute the role-family alignment factor between JD and candidate.
 
     Returns:
-        1.00  — same family
+        1.00  — same known family
         0.85  — related family
+        0.72  — loosely related family
         0.60  — unrelated family
+        0.25  — either family is unknown (no tech signal detected)
     """
+    if jd_family == "unknown" or candidate_family == "unknown":
+        return 0.25
     if jd_family == candidate_family:
         return 1.0
     related = _ROLE_FAMILY_RELATED.get(jd_family, set())
     if candidate_family in related:
         return 0.85
+    loosely = _ROLE_FAMILY_LOOSELY_RELATED.get(jd_family, set())
+    if candidate_family in loosely:
+        return 0.72
     return 0.60
 
 
@@ -768,13 +859,33 @@ def _get_role_family_factor(jd_family: str, candidate_family: str) -> float:
 # ==============================================================================
 
 
+_SENIORITY_SYNONYMS: dict[str, str] = {
+    "sr": "senior",
+    "jr": "junior",
+    "tech lead": "lead",
+    "tech lead ": "lead ",
+    "software architect": "architect",
+    "engineering manager": "manager",
+}
+
+
 def detect_seniority(title: str) -> int:
     """Detect the seniority level index for a given job title.
 
+    Supports common synonyms (sr→senior, tech lead→lead, etc.).
     Returns an index into _SENIORITY_ORDER (higher = more senior).
     Defaults to "mid" (index 3) if no keyword found.
     """
     title_lower = title.lower()
+
+    # Check synonyms first
+    for synonym, standard in _SENIORITY_SYNONYMS.items():
+        if synonym in title_lower:
+            for i, level in enumerate(_SENIORITY_ORDER):
+                if level == standard:
+                    return i
+
+    # Standard lookup
     for i, level in enumerate(_SENIORITY_ORDER):
         if level in title_lower:
             return i
@@ -828,17 +939,179 @@ def _get_recency_weight(recency_info: dict) -> float:
 # ==============================================================================
 
 
-def analyze_title_relevance(jd_text: str, resume_text: str) -> TitleAnalysis:
-    """Score how well candidate's job titles match the JD title.
+def detect_current_role(candidate_titles: list[dict]) -> dict | None:
+    """Identify the current/most recent role from the candidate's title history.
 
-    For each candidate title, computes:
-        final = semantic_similarity × seniority_factor × role_family_factor × recency_factor
+    Returns the entry that:
+      1. Has is_current=True (contains "Present", "Current", "Now")
+      2. Or has the latest end_year (most recent role)
+      3. Or the first entry if none have dates
+    """
+    if not candidate_titles:
+        return None
 
-    Takes the best candidate title, scales to 0-100, and returns
-    a detailed TitleAnalysis with debug info.
+    current = [e for e in candidate_titles if e.get("is_current")]
+    if current:
+        return current[0]
+
+    with_dates = [e for e in candidate_titles if e.get("end_year") is not None]
+    if with_dates:
+        with_dates.sort(key=lambda e: e["end_year"], reverse=True)
+        return with_dates[0]
+
+    return candidate_titles[0]
+
+
+def _compute_title_raw_score(
+    jd_title: str,
+    candidate_title: str,
+    jd_family: str,
+    jd_seniority: int,
+    entry: dict,
+    jd_confidence: float = 1.0,
+) -> dict:
+    """Compute the raw score components for a single candidate title against the JD title.
+
+    Scoring formula:
+        raw = semantic_similarity × seniority_factor × role_family_factor
+              × recency_factor × family_confidence_factor
+
+    Returns a dict with all components, families, confidence, and final score.
     """
     from resume_ranker.semantic import semantic_similarity
 
+    sim = semantic_similarity(jd_title, candidate_title)
+    cand_seniority = detect_seniority(candidate_title)
+    seniority_factor = _get_seniority_factor(jd_seniority, cand_seniority)
+    cand_family = detect_role_family(candidate_title)
+    family_factor = _get_role_family_factor(jd_family, cand_family)
+    recency_factor = _get_recency_weight(entry)
+
+    cand_confidence = _get_family_confidence(candidate_title)
+    # Only apply confidence penalty when families differ — same-family matches
+    # are already validated by role_family_factor and shouldn't be further reduced.
+    if jd_family == cand_family:
+        family_confidence_factor = 1.0
+    else:
+        family_confidence_factor = (jd_confidence + cand_confidence) / 2.0
+
+    raw = sim * seniority_factor * family_factor * recency_factor * family_confidence_factor
+
+    return {
+        "candidate_title": candidate_title,
+        "semantic_similarity": round(sim, 4),
+        "seniority_factor": round(seniority_factor, 4),
+        "role_family_factor": round(family_factor, 4),
+        "recency_factor": round(recency_factor, 4),
+        "family_confidence_factor": round(family_confidence_factor, 4),
+        "score": round(raw * 100.0, 1),
+        "role_family": cand_family,
+        "candidate_family_confidence": round(cand_confidence, 4),
+        "seniority_index": cand_seniority,
+    }
+
+
+def _compute_title_stability_bonus(
+    candidate_titles: list[dict],
+    current_role: dict | None,
+    jd_family: str,
+) -> float:
+    """Compute a stability bonus if multiple recent roles align with JD family.
+
+    Checks current role and the most recent previous role.
+    Returns +3 to +8 bonus depending on alignment strength.
+    """
+    if not candidate_titles or len(candidate_titles) < 2:
+        return 0.0
+
+    if current_role is None:
+        return 0.0
+
+    current_family = detect_role_family(current_role["title"])
+
+    # Find the previous role (chronologically before current)
+    prev = None
+    current_end = current_role.get("end_year")
+    current_start = current_role.get("start_year")
+    for e in candidate_titles:
+        if e["title"] == current_role["title"]:
+            continue
+        e_end = e.get("end_year")
+        if e_end is not None and (current_start is None or e_end <= current_start):
+            if prev is None or (e_end > (prev.get("end_year") or 0)):
+                prev = e
+
+    if prev is None:
+        return 0.0
+
+    prev_family = detect_role_family(prev["title"])
+
+    # Both families align with JD
+    current_align = _get_role_family_factor(jd_family, current_family)
+    prev_align = _get_role_family_factor(jd_family, prev_family)
+
+    if current_align >= 0.85 and prev_align >= 0.85:
+        return 8.0
+    if current_align >= 0.85 and prev_align >= 0.72:
+        return 5.0
+    if current_align >= 0.72 and prev_align >= 0.72:
+        return 3.0
+
+    return 0.0
+
+
+def _compute_title_drift_penalty(
+    current_role: dict | None,
+    jd_family: str,
+    candidate_titles: list[dict],
+) -> float:
+    """Compute a penalty if the candidate recently moved away from JD family.
+
+    If current role is unrelated to JD but old roles were related:
+    Returns -5 to -15 depending on drift severity.
+    """
+    if current_role is None:
+        return 0.0
+
+    current_family = detect_role_family(current_role["title"])
+    current_align = _get_role_family_factor(jd_family, current_family)
+
+    # Only applies if current role is not well-aligned
+    if current_align >= 0.85:
+        return 0.0
+
+    # Check if any previous role was better aligned
+    best_prev_align = 0.0
+    for e in candidate_titles:
+        if e["title"] == current_role["title"]:
+            continue
+        ef = detect_role_family(e["title"])
+        ea = _get_role_family_factor(jd_family, ef)
+        if ea > best_prev_align:
+            best_prev_align = ea
+
+    if best_prev_align >= 0.85:
+        return -15.0
+    if best_prev_align >= 0.72:
+        return -10.0
+    if best_prev_align >= 0.60:
+        return -5.0
+
+    return 0.0
+
+
+def analyze_title_relevance(jd_text: str, resume_text: str) -> TitleAnalysis:
+    """Score how well candidate's job titles match the JD title.
+
+    Scoring incorporates:
+      1. Per-title scoring: semantic_similarity × seniority_factor × role_family_factor × recency_factor
+      2. Current role influence: 70% best_title + 30% current_title
+      3. Unrelated family hard cap (max 60)
+      4. Title stability bonus (+3 to +8) for consistent specialization
+      5. Title drift penalty (-5 to -15) for moving away from JD family
+
+    Returns a TitleAnalysis with detailed debug explainability.
+    """
     jd_title = extract_jd_title(jd_text)
     candidate_titles = extract_candidate_titles(resume_text)
 
@@ -856,75 +1129,133 @@ def analyze_title_relevance(jd_text: str, resume_text: str) -> TitleAnalysis:
         )
 
     jd_family = detect_role_family(jd_title)
+    jd_confidence = _get_family_confidence(jd_title)
     jd_seniority = detect_seniority(jd_title)
 
-    best_raw_score = 0.0
-    best_entry = candidate_titles[0]
-    best_semantic = 0.0
-    best_seniority_factor = 1.0
-    best_family_factor = 1.0
-    best_recency_factor = 1.0
+    # --- 1. Score every candidate title ---
+    scored_entries: list[dict] = []
+    best_entry: dict | None = None
 
     for entry in candidate_titles:
         title = entry["title"]
+        scored = _compute_title_raw_score(jd_title, title, jd_family, jd_seniority, entry, jd_confidence)
+        scored_entries.append(scored)
+        if best_entry is None or scored["score"] > best_entry["score"]:
+            best_entry = scored
 
-        # Semantic similarity between JD title and candidate title
-        sim = semantic_similarity(jd_title, title)
+    # --- 2. Identify current role ---
+    current_role = detect_current_role(candidate_titles)
+    current_title_score_entry: dict | None = None
+    if current_role:
+        current_title_score_entry = _compute_title_raw_score(
+            jd_title, current_role["title"], jd_family, jd_seniority, current_role, jd_confidence
+        )
 
-        # Seniority alignment
-        cand_seniority = detect_seniority(title)
-        seniority_factor = _get_seniority_factor(jd_seniority, cand_seniority)
+    # --- 3. Blend best and current scores ---
+    best_score = best_entry["score"] if best_entry else 0.0
+    current_score = current_title_score_entry["score"] if current_title_score_entry else best_score
 
-        # Role family alignment
-        cand_family = detect_role_family(title)
-        family_factor = _get_role_family_factor(jd_family, cand_family)
+    blended = best_score * 0.70 + current_score * 0.30
 
-        # Recency weighting
-        recency_factor = _get_recency_weight(entry)
+    # --- 4. Unrelated/unknown family cap ---
+    best_family_factor = best_entry["role_family_factor"] if best_entry else 0.0
+    if best_family_factor <= 0.60:
+        blended = min(blended, 60.0)
 
-        # Combined raw score (0-1 range)
-        raw = sim * seniority_factor * family_factor * recency_factor
+    # --- 5. Semantic safety guard ---
+    # If semantic similarity is weak AND role-family confidence is low,
+    # reduce score aggressively to avoid false matches on non-tech titles.
+    penalties_applied: list[str] = []
+    if best_entry and best_entry["semantic_similarity"] < 0.45:
+        jd_conf = jd_confidence
+        cand_conf = best_entry.get("candidate_family_confidence", 0.0)
+        if jd_family == "unknown":
+            penalties_applied.append("unknown_jd_family")
+        if best_entry["role_family"] == "unknown":
+            penalties_applied.append("unknown_candidate_family")
+        if jd_conf < 0.55 or cand_conf < 0.55:
+            blended *= 0.5
+            penalties_applied.append("low_confidence_semantic_guard")
 
-        if raw > best_raw_score:
-            best_raw_score = raw
-            best_entry = entry
-            best_semantic = sim
-            best_seniority_factor = seniority_factor
-            best_family_factor = family_factor
-            best_recency_factor = recency_factor
+    # --- 6. Stability bonus & drift penalty ---
+    stability_bonus = _compute_title_stability_bonus(candidate_titles, current_role, jd_family)
+    drift_penalty = _compute_title_drift_penalty(current_role, jd_family, candidate_titles)
 
-    # Scale to 0-100
-    score = min(100.0, best_raw_score * 100.0)
+    final_score = blended + stability_bonus + drift_penalty
+    final_score = max(0.0, min(100.0, final_score))
 
-    # Qualitative label
-    if score >= 70:
+    # --- 6. Qualitative label ---
+    if final_score >= 70:
         level = "Strong"
-    elif score >= 40:
+    elif final_score >= 40:
         level = "Moderate"
     else:
         level = "Low"
 
-    # Debug explainability
-    best_candidate_family = detect_role_family(best_entry["title"])
-    debug = {
+    # --- 7. Warnings ---
+    warnings: list[str] = []
+    if current_role and best_entry:
+        current_family = current_title_score_entry["role_family"] if current_title_score_entry else ""
+        if current_family != jd_family and best_family_factor < 1.0:
+            warnings.append("Current role differs from JD role family")
+    if drift_penalty < 0:
+        warnings.append("Candidate recently moved away from JD specialization")
+
+    # --- 8. Debug explainability ---
+    # Backward-compat top-level fields for existing consumers
+    best_candidate_family = best_entry["role_family"] if best_entry else ""
+    best_semantic = best_entry["semantic_similarity"] if best_entry else 0.0
+    best_seniority_factor_val = best_entry["seniority_factor"] if best_entry else 1.0
+    best_family_factor_val = best_entry["role_family_factor"] if best_entry else 1.0
+    best_recency_factor_val = best_entry["recency_factor"] if best_entry else 1.0
+
+    jd_family_confidence = round(jd_confidence, 4)
+
+    debug: dict = {
         "jd_title": jd_title,
-        "candidate_title": best_entry["title"],
-        "semantic_similarity": round(best_semantic, 4),
-        "seniority_factor": round(best_seniority_factor, 4),
-        "role_family_factor": round(best_family_factor, 4),
-        "recency_factor": round(best_recency_factor, 4),
-        "final_score": round(score, 2),
-        "role_family_match": best_candidate_family,
         "jd_role_family": jd_family,
+        "jd_family_confidence": jd_family_confidence,
         "jd_seniority_index": jd_seniority,
-        "candidate_seniority_index": detect_seniority(best_entry["title"]),
+        "candidate_title": best_entry["candidate_title"] if best_entry else "",
+        "semantic_similarity": best_semantic,
+        "seniority_factor": best_seniority_factor_val,
+        "role_family_factor": best_family_factor_val,
+        "family_confidence_factor": best_entry["family_confidence_factor"] if best_entry else 1.0,
+        "recency_factor": best_recency_factor_val,
+        "role_family_match": best_candidate_family,
+        "candidate_seniority_index": best_entry["seniority_index"] if best_entry else 3,
+        "final_score": round(final_score, 2),
+        "scored_titles": scored_entries,
+        "title_stability_bonus": stability_bonus,
+        "title_drift_penalty": drift_penalty,
+        "blended_score": round(blended, 2),
     }
+
+    if penalties_applied:
+        debug["penalties_applied"] = penalties_applied
+
+    if best_entry:
+        debug["best_title_match"] = best_entry
+
+    if current_title_score_entry:
+        debug["current_title_match"] = current_title_score_entry
+
+    if warnings:
+        debug["warnings"] = warnings
+
+    summary_parts = [f'{level} title alignment.']
+    if best_entry:
+        summary_parts.append(f'Best: "{best_entry["candidate_title"]}"')
+    if current_role and current_title_score_entry:
+        summary_parts.append(f'Current: "{current_role["title"]}"')
+    summary_parts.append(f'→ "{jd_title}"')
+    summary = " | ".join(summary_parts)
 
     return TitleAnalysis(
         jd_title=jd_title,
         candidate_titles=candidate_titles,
-        score=score,
-        summary=(f'{level} title alignment. Best match: "{best_entry["title"]}" → "{jd_title}".'),
+        score=round(final_score, 1),
+        summary=summary,
         debug=debug,
     )
 

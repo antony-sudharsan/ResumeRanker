@@ -1338,7 +1338,15 @@ def compute_experience_ranking(
     recency = calculate_recency_score(periods, jd_title, jd_required_skills)
     seniority = calculate_seniority_fit(periods, jd_title)
 
-    experience_score = total_fit_score * 0.50 + relevant_fit_score * 0.50
+    experience_score = total_fit_score * 0.40 + relevant_fit_score * 0.60
+
+    if jd_required_years is not None and jd_required_years > 0:
+        if relevant_years <= 0:
+            experience_score = min(experience_score, 30.0)
+        elif relevant_years < jd_required_years * 0.25:
+            experience_score = min(experience_score, 40.0)
+        elif relevant_years < jd_required_years * 0.50:
+            experience_score = min(experience_score, 60.0)
 
     warnings: list[str] = []
     if len(period_details) != len(periods):
