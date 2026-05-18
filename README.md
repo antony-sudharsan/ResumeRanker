@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 ### Run the Web UI
 
 ```bash
-uvicorn resume_ranker.app:app --reload
+uvicorn resume_ranker.main:app --reload
 ```
 
 Open [http://localhost:8000](http://localhost:8000) in your browser.
@@ -96,7 +96,7 @@ ruff format .
 
 ```
 resume_ranker/
-├── app.py          # FastAPI web application
+├── main.py         # FastAPI web application
 ├── parser.py       # PDF/DOCX/TXT text extraction
 ├── skills.py       # Technology skills dictionary, extraction & inference graph
 ├── experience.py   # Experience years extraction
