@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Ranker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Resume Ranker</h1>
+            <p class="subtitle">Rank candidates based on skills, experience, and role fit</p>
+        </header>
+
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        <form action="/rank" method="post" enctype="multipart/form-data" id="rankForm">
+            <div class="jd-structured">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="designation">Designation</label>
+                        <input type="text" id="designation" name="designation"
+                               placeholder="e.g. Frontend Full Stack Developer"
+                               value="{{ designation if designation else '' }}" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="skills">Skills (comma-separated)</label>
+                    <textarea id="skills" name="skills" rows="3"
+                              placeholder="e.g. React.js, JavaScript, HTML5, CSS3, Tailwind CSS, Redux, Java, Spring Boot..."
+                    >{{ skills if skills else '' }}</textarea>
+                </div>
+
+                <div class="form-row form-row-3">
+                    <div class="form-group">
+                        <label for="min_experience">Min Experience (years)</label>
+                        <input type="number" id="min_experience" name="min_experience" min="0" step="0.5"
+                               placeholder="e.g. 1"
+                               value="{{ min_experience if min_experience else '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="max_experience">Max Experience (years)</label>
+                        <input type="number" id="max_experience" name="max_experience" min="0" step="0.5"
+                               placeholder="e.g. 3"
+                               value="{{ max_experience if max_experience else '' }}">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="roles_responsibilities">Roles and Responsibilities</label>
+                    <textarea id="roles_responsibilities" name="roles_responsibilities" rows="6"
+                              placeholder="Describe the key responsibilities for this role..."
+                    >{{ roles_responsibilities if roles_responsibilities else '' }}</textarea>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="resumes">Upload Resumes</label>
+                <div class="file-upload" id="dropZone">
+                    <input type="file" id="resumes" name="resumes" multiple
+                           accept=".pdf,.docx,.txt">
+                    <div class="upload-content">
+                        <span class="upload-icon">&#128196;</span>
+                        <p>Drag & drop resumes here or <strong>click to browse</strong></p>
+                        <p class="file-types">Supported: PDF, DOCX, TXT</p>
+                    </div>
+                    <div id="fileList" class="file-list"></div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary" id="submitBtn">
+                Rank Candidates
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const MAX_RESUMES = 5;
+        let selectedFiles = [];
+
+        const fileInput = document.getElementById('resumes');
+        const fileList = document.getElementById('fileList');
+        const dropZone = document.getElementById('dropZone');
+        const form = document.getElementById('rankForm');
+        const submitBtn = document.getElementById('submitBtn');
+
+        fileInput.addEventListener('change', () => {
+            for (const file of fileInput.files) {
+                if (selectedFiles.length >= MAX_RESUMES) {
+                    alert(`Maximum ${MAX_RESUMES} resumes allowed.`);
+                    break;
+                }
+                if (!selectedFiles.find(f => f.name === file.name && f.size === file.size)) {
+                    selectedFiles.push(file);
+                }
+            }
+            renderFileList();
+            fileInput.value = '';
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            for (const file of e.dataTransfer.files) {
+                if (selectedFiles.length >= MAX_RESUMES) {
+                    alert(`Maximum ${MAX_RESUMES} resumes allowed.`);
+                    break;
+                }
+                if (!selectedFiles.find(f => f.name === file.name && f.size === file.size)) {
+                    selectedFiles.push(file);
+                }
+            }
+            renderFileList();
+        });
+
+        function renderFileList() {
+            fileList.innerHTML = '';
+            selectedFiles.forEach((file, i) => {
+                const div = document.createElement('div');
+                div.className = 'file-item file-item-with-remove';
+                div.innerHTML = `<span>${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
+                    <button type="button" class="btn-remove" data-index="${i}">&times;</button>`;
+                div.querySelector('.btn-remove').addEventListener('click', () => {
+                    selectedFiles.splice(i, 1);
+                    renderFileList();
+                });
+                fileList.appendChild(div);
+            });
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (selectedFiles.length === 0) {
+                alert('Please select at least one resume.');
+                return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Ranking candidates...';
+
+            const fd = new FormData();
+            fd.append('designation', document.getElementById('designation').value);
+            fd.append('skills', document.getElementById('skills').value);
+            fd.append('min_experience', document.getElementById('min_experience').value);
+            fd.append('max_experience', document.getElementById('max_experience').value);
+            fd.append('roles_responsibilities', document.getElementById('roles_responsibilities').value);
+            selectedFiles.forEach(f => fd.append('resumes', f));
+
+            try {
+                const resp = await fetch('/rank', { method: 'POST', body: fd });
+                const html = await resp.text();
+                document.open();
+                document.write(html);
+                document.close();
+            } catch (err) {
+                alert('Error ranking candidates. Please try again.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Rank Candidates';
+            }
+        });
+    </script>
+</body>
+</html>
